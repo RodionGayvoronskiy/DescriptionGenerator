@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /b/s \"D:\\\\Generators\\\\DescriptionGenerators\\\\DescriptionGenerators\\\\DescriptionGenerators.Sample\\\\*.cs\")"
+    ]
+  }
+}

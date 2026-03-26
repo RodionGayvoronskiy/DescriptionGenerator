@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="DescriptionGenerators/DescriptionGenerators.Sample/DescriptionGenerators.Sample.csproj" />
+  <Project Path="DescriptionGenerators/DescriptionGenerators.Tests/DescriptionGenerators.Tests.csproj" />
+  <Project Path="DescriptionGenerators/DescriptionGenerators/DescriptionGenerators.csproj" />
+</Solution>
