@@ -58,39 +58,58 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		if (context.TargetSymbol is not INamedTypeSymbol symbol) return null;
 
 		var declaration = Unsafe.As<ClassDeclarationSyntax>(context.TargetNode);
+
+		// Walk from derived → base so that overrides in derived take priority.
+		// Each level's fields are inserted at the front, giving final order: base fields first.
 		var fields = new List<FieldData>();
+		var seenKeys = new HashSet<string>();
 
-		foreach (var member in symbol.GetMembers())
+		var current = symbol;
+		while (current != null && current.SpecialType == SpecialType.None)
 		{
-			if (member is not (IPropertySymbol or IFieldSymbol)) continue;
-			if (member.IsStatic) continue;
-			if (member.Name.StartsWith("<")) continue;
+			var levelFields = new List<FieldData>();
 
-			if (member.DeclaredAccessibility is not (
-			    Accessibility.Public or
-			    Accessibility.Protected or
-			    Accessibility.ProtectedOrInternal))
-				continue;
-
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? _, IgnoreKeyAttribute)) continue;
-
-			// ── JSON key ──
-			string key;
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, KeyAttribute))
-				key = keyAttr?.ConstructorArguments.FirstOrDefault().Value as string ?? ToSnakeCase(member.Name);
-			else
-				key = ToSnakeCase(member.Name);
-
-			// ── [EditorField] hint ──
-			var editorHint = EditorFieldHint.Default;
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, EditorFieldAttribute))
+			foreach (var member in current.GetMembers())
 			{
-				// FieldType enum: Default=0, Sprite=1
-				int raw = editorAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : 0;
-				editorHint = (EditorFieldHint)raw;
+				if (member is not (IPropertySymbol or IFieldSymbol)) continue;
+				if (member.IsStatic) continue;
+				if (member.Name.StartsWith("<")) continue;
+
+				if (member.DeclaredAccessibility is not (
+				    Accessibility.Public or
+				    Accessibility.Protected or
+				    Accessibility.ProtectedOrInternal))
+					continue;
+
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? _, IgnoreKeyAttribute)) continue;
+
+				// ── JSON key ──
+				string key;
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, KeyAttribute))
+					key = keyAttr?.ConstructorArguments.FirstOrDefault().Value as string ?? ToSnakeCase(member.Name);
+				else
+					key = ToSnakeCase(member.Name);
+
+				// Internal framework keys — never shown in the editor
+				if (key is "id" or "type" or "m_id" or "m_type") continue;
+
+				// Derived class already declared this key — skip base version
+				if (!seenKeys.Add(key)) continue;
+
+				// ── [EditorField] hint ──
+				var editorHint = EditorFieldHint.Default;
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, EditorFieldAttribute))
+				{
+					int raw = editorAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : 0;
+					editorHint = (EditorFieldHint)raw;
+				}
+
+				levelFields.Add(new FieldData(key, member, editorHint));
 			}
 
-			fields.Add(new FieldData(key, member, editorHint));
+			// Insert this level's fields before any fields already collected from more-derived types
+			fields.InsertRange(0, levelFields);
+			current = current.BaseType;
 		}
 
 		return new DescriptionData(fields.ToImmutableArray(), declaration);
