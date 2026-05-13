@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -79,8 +80,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				// Если атрибута Key нет, генерируем ключ автоматически
 				key = ToSnakeCase(member.Name);
 			}
+			
+			object? defValue = member.TryGetAnyAttributeInSelf(out AttributeData? attribute, KeyAttribute) ? attribute?.ConstructorArguments[1].Value : null;
 
-			list.Add(new KeyData(key!, member));
+			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue)));
 		}
 
 		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
@@ -125,10 +128,23 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly ISymbol symbol = symbol;
 	}
 
-	private struct KeyData(string key, ISymbol symbol)
+	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue)
 	{
 		public readonly string key = key;
 		public readonly ISymbol symbol = symbol;
+	
+		public readonly bool hasDefaultValue = hasDefaultValue;
+		public readonly string defaultValue = defaultValue;
+	}
+	
+	private static string FormatDefaultArg(string? typeName, object? defaultValue)
+	{
+		if (defaultValue == null) return "default";
+		var literal = typeName switch
+		{
+			_ => $"{defaultValue}"
+		};
+		return literal;
 	}
 
 	private void GenerateCode(SourceProductionContext context, DescriptionData data)
@@ -147,71 +163,79 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				$"{ctorModifier} {data.symbol.Name}(Framework.Core.IContext context, string id, Framework.Core.Data.IJsonDataReader reader) : base(context, id, reader)")
 			.BeginBlock();
 
-		foreach (var member in data.members)
+		foreach (KeyData member in data.members)
 		{
 			var typeName = member.symbol.GetSymbolType()?.ToDisplayString();
 			switch (typeName)
 			{
 				case "string":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\");");
+				{
+					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : "default";
+					code.AppendLine(
+						$"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\", defaultValue: {defaultValue});");
+				}
 					break;
 				case "int":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "bool":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "byte":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadByteOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadByteOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "double":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "long":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "ulong":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadULongOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadULongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "ushort":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadUshortOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadUshortOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "uint":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadUIntOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadUIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "float":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "string[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadStringArrayOrEmpty(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadStringArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "float[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatArrayOrEmpty(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredString":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\");");
+				{
+					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : "default";
+					code.AppendLine(
+						$"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\", defaultValue: {defaultValue});");
+				}
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredBool":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredLong":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "Framework.Core.Data.IJsonDataReader":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key});");
 					break;
 				default:
 					var memberType = member.symbol.GetSymbolType();
 					if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Enum })
 					{
 						code.AppendLine(
-							$"{member.symbol.Name} = reader.ReadEnumOrDefault<{typeName}>(\"{member.key}\");");
+							$"{member.symbol.Name} = reader.ReadEnumOrDefault<{typeName}>(\"{member.key}\", defaultValue: ({typeName}){member.defaultValue});");
 					}
 					else if (memberType is INamedTypeSymbol { IsGenericType: true } genericMember
 					         && genericMember.OriginalDefinition.ToDisplayString() ==
