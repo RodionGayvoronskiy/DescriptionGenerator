@@ -77,6 +77,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 				if (member.DeclaredAccessibility is not (
 				    Accessibility.Public or
+				    Accessibility.Private or
 				    Accessibility.Protected or
 				    Accessibility.ProtectedOrInternal))
 					continue;
@@ -231,6 +232,8 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 	private static string ToSnakeCase(string name)
 	{
 		if (string.IsNullOrEmpty(name)) return name;
+		if (name.StartsWith("m_"))
+			name = name.Substring(2);
 		var sb = new System.Text.StringBuilder();
 		for (int i = 0; i < name.Length; i++)
 		{

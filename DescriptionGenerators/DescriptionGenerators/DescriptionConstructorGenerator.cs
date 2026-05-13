@@ -54,8 +54,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			if (member.Name.StartsWith("<"))
 				continue;
 
-			// Пропускаем приватные и внутренние члены (обрабатываем только public/protected)
-			if (member.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Protected
+			// Пропускаем внутренние члены (обрабатываем только public/protected)
+			if (member.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Protected or Accessibility.Private
 			    or Accessibility.ProtectedOrInternal))
 				continue;
 
@@ -64,7 +64,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				continue;
 
 			// Определяем ключ: либо из атрибута Key, либо автоматически из имени
-			string key;
+			string? key;
 			if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttribute, KeyAttribute))
 			{
 				// Если есть атрибут Key, берем значение из него или генерируем из имени
@@ -90,6 +90,9 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	{
 		if (string.IsNullOrEmpty(name))
 			return name;
+		
+		if (name.StartsWith("m_"))
+			name = name.Substring(2);
 
 		var builder = new System.Text.StringBuilder();
 		for (int i = 0; i < name.Length; i++)

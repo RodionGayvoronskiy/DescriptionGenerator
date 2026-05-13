@@ -103,7 +103,7 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		}
 
 		// Generate extension for each AddNew<T> call
-		foreach (var addNew in data.AddNewCalls)
+		foreach (AddNewData addNew in data.AddNewCalls)
 		{
 			var interfaceName = addNew.interfaceType.ToDisplayString();
 			var interfaceSimpleName = addNew.interfaceType.Name;
