@@ -202,12 +202,19 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		if (memberType is INamedTypeSymbol { IsGenericType: true } generic)
 		{
 			var origDef = generic.OriginalDefinition.ToDisplayString();
+			if (origDef == "Framework.Core.Collections.IDescriptions<T>")
+			{
+				var elementType = generic.TypeArguments[0];
+				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
+					return $"{prefix}\"{key}\", {kinds}NestedMap, typeof(global::{elementType.ToDisplayString()})),";
+				return null;
+			}
+
 			bool isList = origDef is
 				"System.Collections.Generic.List<T>" or
 				"System.Collections.Generic.IList<T>" or
 				"System.Collections.Generic.IReadOnlyList<T>" or
-				"System.Collections.Generic.ICollection<T>" or
-				"Framework.Core.Collections.IDescriptions<T>";
+				"System.Collections.Generic.ICollection<T>";
 
 			if (isList)
 			{

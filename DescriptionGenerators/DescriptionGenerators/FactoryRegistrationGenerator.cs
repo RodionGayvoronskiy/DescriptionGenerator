@@ -20,16 +20,24 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			transform: GetAddNewData
 		).Where(x => x.HasValue).Select((x, _) => x!.Value);
 
-		// Find all classes with DescriptionTypeAttribute
-		var descriptionTypes = context.SyntaxProvider.ForAttributeWithMetadataName(
+		// Find [DescriptionType] classes in current compilation source files
+		var descriptionTypesFromSource = context.SyntaxProvider.ForAttributeWithMetadataName(
 			"Modules.Framework.Core.DescriptionTypeAttribute",
 			predicate: (node, _) => node is ClassDeclarationSyntax,
 			transform: GetDescriptionTypeData
 		).Where(x => x.HasValue).Select((x, _) => x!.Value);
 
+		// Find [DescriptionType] classes in referenced assemblies (not visible to ForAttributeWithMetadataName)
+		var descriptionTypesFromReferences = context.CompilationProvider.SelectMany(
+			static (compilation, ct) => GetDescriptionTypesFromReferences(compilation, ct));
+
+		var allDescriptionTypes = descriptionTypesFromSource.Collect()
+			.Combine(descriptionTypesFromReferences.Collect())
+			.Select(static (pair, _) => pair.Left.AddRange(pair.Right));
+
 		// Combine and generate
-		var combined = addNewInvocations.Collect().Combine(descriptionTypes.Collect());
-		
+		var combined = addNewInvocations.Collect().Combine(allDescriptionTypes);
+
 		context.RegisterSourceOutput(combined, GenerateCode);
 	}
 
@@ -72,9 +80,55 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		return new AddNewData(typeSymbol, path);
 	}
 
+	private static ImmutableArray<DescriptionTypeData> GetDescriptionTypesFromReferences(Compilation compilation, CancellationToken ct)
+	{
+		var descAttrSymbol = compilation.GetTypeByMetadataName("Modules.Framework.Core.DescriptionTypeAttribute");
+		if (descAttrSymbol == null)
+			return ImmutableArray<DescriptionTypeData>.Empty;
+
+		var result = new List<DescriptionTypeData>();
+
+		foreach (var reference in compilation.References)
+		{
+			ct.ThrowIfCancellationRequested();
+			if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
+				continue;
+
+			WalkNamespace(assembly.GlobalNamespace, descAttrSymbol, result, ct);
+		}
+
+		return result.ToImmutableArray();
+	}
+
+	private static void WalkNamespace(INamespaceSymbol ns, INamedTypeSymbol descAttrSymbol, List<DescriptionTypeData> result, CancellationToken ct)
+	{
+		ct.ThrowIfCancellationRequested();
+
+		foreach (var type in ns.GetTypeMembers())
+		{
+			if (type.IsAbstract) continue;
+
+			foreach (var attr in type.GetAttributes())
+			{
+				if (!SymbolEqualityComparer.Default.Equals(attr.AttributeClass, descAttrSymbol))
+					continue;
+
+				var typePath = attr.ConstructorArguments.FirstOrDefault().Value as string ?? string.Empty;
+				result.Add(new DescriptionTypeData(type, typePath));
+				break;
+			}
+		}
+
+		foreach (var nested in ns.GetNamespaceMembers())
+			WalkNamespace(nested, descAttrSymbol, result, ct);
+	}
+
 	private static DescriptionTypeData? GetDescriptionTypeData(GeneratorAttributeSyntaxContext context, CancellationToken ct)
 	{
 		if (context.TargetSymbol is not INamedTypeSymbol typeSymbol)
+			return null;
+
+		if (typeSymbol.IsAbstract)
 			return null;
 
 		// Get the type argument from DescriptionTypeAttribute
