@@ -99,13 +99,15 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 				// ── [EditorField] hint ──
 				var editorHint = EditorFieldHint.Default;
+				string editorPath = "";
 				if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, EditorFieldAttribute))
 				{
 					int raw = editorAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : 0;
 					editorHint = (EditorFieldHint)raw;
+					editorPath = editorAttr?.ConstructorArguments.ElementAtOrDefault(1).Value as string ?? "";
 				}
 
-				levelFields.Add(new FieldData(key, member, editorHint));
+				levelFields.Add(new FieldData(key, member, editorHint, editorPath));
 			}
 
 			// Insert this level's fields before any fields already collected from more-derived types
@@ -135,7 +137,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			var memberType = field.member.GetSymbolType();
 			var typeName = memberType?.ToDisplayString();
 
-			string? entry = BuildEntry(field.key, typeName, memberType, field.editorHint);
+			string? entry = BuildEntry(field.key, typeName, memberType, field.editorHint, field.editorPath);
 			if (entry != null)
 				code.AppendLine(entry);
 		}
@@ -149,7 +151,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 	// ── Entry builders ───────────────────────────────────────────────────────────
 
-	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType, EditorFieldHint hint)
+	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType, EditorFieldHint hint, string path = "")
 	{
 		const string prefix = "new global::Framework.Core.DescriptionEditorField(";
 		const string kinds = "global::Framework.Core.EditorFieldKind.";
@@ -158,9 +160,17 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 		// Hint overrides for string
 		if (typeName == "string" && hint == EditorFieldHint.Sprite)
-			return $"{prefix}\"{key}\", {kinds}Sprite),";
+		{
+			return !string.IsNullOrEmpty(path)
+				? $"{prefix}\"{key}\", {kinds}Sprite, \"{path}\"),"
+				: $"{prefix}\"{key}\", {kinds}Sprite),";
+		}
 		if (typeName == "string" && hint == EditorFieldHint.Texture)
-			return $"{prefix}\"{key}\", {kinds}Texture),";
+		{
+			return !string.IsNullOrEmpty(path)
+				? $"{prefix}\"{key}\", {kinds}Texture, \"{path}\"),"
+				: $"{prefix}\"{key}\", {kinds}Texture),";
+		}
 
 		switch (typeName)
 		{
@@ -271,10 +281,11 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		public readonly ClassDeclarationSyntax declaration = declaration;
 	}
 
-	private readonly struct FieldData(string key, ISymbol member, EditorFieldHint editorHint)
+	private readonly struct FieldData(string key, ISymbol member, EditorFieldHint editorHint, string editorPath = "")
 	{
 		public readonly string key = key;
 		public readonly ISymbol member = member;
 		public readonly EditorFieldHint editorHint = editorHint;
+		public readonly string editorPath = editorPath;
 	}
 }

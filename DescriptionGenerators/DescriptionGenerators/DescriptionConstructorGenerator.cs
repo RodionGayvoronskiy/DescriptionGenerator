@@ -160,7 +160,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		code.AppendLine($"using Framework.Core.Factories;")
 			.BeginClass(@namespace, declarationText)
 			.AppendLine(
-				$"{ctorModifier} {data.symbol.Name}(Framework.Core.IContext context, string id, Framework.Core.Data.IJsonDataReader reader) : base(context, id, reader)")
+				$"{ctorModifier} {data.symbol.Name}(global::Framework.Core.IContext context, string id, global::Framework.Core.Data.IJsonDataReader reader) : base(context, id, reader)")
 			.BeginBlock();
 
 		foreach (KeyData member in data.members)
@@ -235,7 +235,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Enum })
 					{
 						code.AppendLine(
-							$"{member.symbol.Name} = reader.ReadEnumOrDefault<{typeName}>(\"{member.key}\", defaultValue: ({typeName}){member.defaultValue});");
+							$"{member.symbol.Name} = reader.ReadEnumOrDefault<global::{typeName}>(\"{member.key}\", defaultValue: (global::{typeName}){member.defaultValue});");
 					}
 					else if (memberType is INamedTypeSymbol { IsGenericType: true } genericMember
 					         && genericMember.OriginalDefinition.ToDisplayString() ==
@@ -245,10 +245,16 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 						code.AppendLine(
 							$"{member.symbol.Name} = context.InstantiateDescriptions<global::{elementType}>(\"{member.key}\", reader);");
 					}
+					else if (memberType is IArrayTypeSymbol { ElementType: INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class } arrayElement })
+					{
+						var elementTypeName = arrayElement.ToDisplayString();
+						code.AppendLine(
+							$"{member.symbol.Name} = context.InstantiateArray<global::{elementTypeName}>(\"{member.key}\", reader);");
+					}
 					else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
 					{
 						code.AppendLine(
-							$"{member.symbol.Name} = context.Instantiate<{typeName}>(\"{member.key}\", reader);");
+							$"{member.symbol.Name} = context.Instantiate<global::{typeName}>(\"{member.key}\", reader);");
 					}
 
 					break;
@@ -257,7 +263,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 		code.AppendLine("OnConstructed(context, reader);")
 			.EndBlock()
-			.AppendLine("partial void OnConstructed(Framework.Core.IContext context, Framework.Core.Data.IJsonDataReader reader);")
+			.AppendLine("partial void OnConstructed(global::Framework.Core.IContext context, global::Framework.Core.Data.IJsonDataReader reader);")
 			.EndClass(@namespace);
 
 		context.AddSource(declarationText.GetFileName(@namespace, "Constructor"), code.GetSourceText());
