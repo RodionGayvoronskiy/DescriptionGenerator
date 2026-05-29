@@ -41,10 +41,20 @@ namespace Framework.Core
 		Nested,
 		/// <summary>A list of nested Description objects (stored as a JSON array of objects).</summary>
 		NestedList,
+		/// <summary>A keyed map of nested Description objects (stored as a JSON object where each key is the child's id).</summary>
+		NestedMap,
 		/// <summary>A list of string primitives (stored as a JSON array of strings).</summary>
 		StringList,
 		/// <summary>A raw JSON sub-node that is not further decomposed.</summary>
 		Node,
+		/// <summary>A 2-component float vector (CFloat2).</summary>
+		Float2,
+		/// <summary>A 3-component float vector (CFloat3).</summary>
+		Float3,
+		/// <summary>A quaternion rotation (CQuaternion).</summary>
+		Quaternion,
+		/// <summary>A list of int primitives (stored as a JSON array of ints).</summary>
+		IntList,
 	}
 	
 	public sealed class DescriptionEditorField

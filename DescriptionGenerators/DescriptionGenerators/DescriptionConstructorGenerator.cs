@@ -140,6 +140,12 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	private static string FormatDefaultArg(string? typeName, object? defaultValue)
 	{
 		if (defaultValue == null) return "default";
+		if (defaultValue is bool boolValue)
+			return boolValue ? "true" : "false";
+		if (defaultValue is float floatValue)
+			return floatValue.ToString(System.Globalization.CultureInfo.InvariantCulture) + "f";
+		if (defaultValue is double doubleValue)
+			return doubleValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
 		var literal = typeName switch
 		{
 			_ => $"{defaultValue}"
@@ -207,6 +213,18 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					break;
 				case "float[]":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					break;
+				case "int[]":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadIntArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					break;
+				case "Framework.Core.Maths.CFloat2":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat2OrDefault(\"{member.key}\");");
+					break;
+				case "Framework.Core.Maths.CFloat3":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat3OrDefault(\"{member.key}\");");
+					break;
+				case "Framework.Core.Maths.CQuaternion":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadQuaternionOrDefault(\"{member.key}\");");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredString":
 				{

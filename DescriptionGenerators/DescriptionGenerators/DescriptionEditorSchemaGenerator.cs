@@ -198,8 +198,20 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			case "string[]":
 				return $"{prefix}\"{key}\", {kinds}StringList),";
 
+			case "int[]":
+				return $"{prefix}\"{key}\", {kinds}IntList),";
+
 			case "Framework.Core.Data.IJsonDataReader":
 				return $"{prefix}\"{key}\", {kinds}Node),";
+
+			case "Framework.Core.Maths.CFloat2":
+				return $"{prefix}\"{key}\", {kinds}Float2),";
+
+			case "Framework.Core.Maths.CFloat3":
+				return $"{prefix}\"{key}\", {kinds}Float3),";
+
+			case "Framework.Core.Maths.CQuaternion":
+				return $"{prefix}\"{key}\", {kinds}Quaternion),";
 		}
 
 		if (memberType == null) return null;
@@ -215,7 +227,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			if (origDef == "Framework.Core.Collections.IDescriptions<T>")
 			{
 				var elementType = generic.TypeArguments[0];
-				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
+				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
 					return $"{prefix}\"{key}\", {kinds}NestedMap, typeof(global::{elementType.ToDisplayString()})),";
 				return null;
 			}
@@ -229,10 +241,10 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			if (isList)
 			{
 				var elementType = generic.TypeArguments[0];
-				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
+				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
 					return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
 
-				// Primitive list — not yet supported, skip
+				// Primitive list (string, int, etc.) — not yet supported, skip
 				return null;
 			}
 		}
