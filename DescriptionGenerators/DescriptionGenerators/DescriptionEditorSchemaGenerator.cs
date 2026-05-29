@@ -85,14 +85,28 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				if (member.TryGetAnyAttributeInSelf(out AttributeData? _, IgnoreKeyAttribute)) continue;
 
 				// ── JSON key ──
+				// An explicit [Key("...")] is an intentional opt-in: External* descriptions
+				// (ExternalReward/Price/Amount/Requirement) reuse the reserved "id" key to
+				// reference another entity, and those fields must stay editable. Keys derived
+				// implicitly from the member name are the base Description identity/discriminator
+				// fields and are filtered out below.
+				bool hasExplicitKey = false;
 				string key;
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, KeyAttribute))
-					key = keyAttr?.ConstructorArguments.FirstOrDefault().Value as string ?? ToSnakeCase(member.Name);
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, KeyAttribute)
+				    && keyAttr?.ConstructorArguments.FirstOrDefault().Value is string explicitKey
+				    && !string.IsNullOrEmpty(explicitKey))
+				{
+					key = explicitKey;
+					hasExplicitKey = true;
+				}
 				else
+				{
 					key = ToSnakeCase(member.Name);
+				}
 
-				// Internal framework keys — never shown in the editor
-				if (key is "id" or "type" or "m_id" or "m_type") continue;
+				// Internal framework identity/discriminator keys — hidden unless a field
+				// explicitly opts into the key via [Key(...)].
+				if (!hasExplicitKey && key is "id" or "type" or "m_id" or "m_type") continue;
 
 				// Derived class already declared this key — skip base version
 				if (!seenKeys.Add(key)) continue;
