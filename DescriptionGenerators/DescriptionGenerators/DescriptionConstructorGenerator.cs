@@ -89,11 +89,63 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
 	}
 
+	// Maps primitive generic collections (List/HashSet/IList/IReadOnlyList/ICollection/
+	// IReadOnlyCollection/IEnumerable<T> for string/int/float/byte, and
+	// IReadOnlyDictionary<string,string>) to the matching reader call. Arrays already
+	// implement the read-only/list/collection/enumerable interfaces, so those are
+	// assigned directly; concrete List/HashSet are wrapped.
+	private static bool TryGetPrimitiveCollectionRead(INamedTypeSymbol type, string key, string memberName, out string assignment)
+	{
+		assignment = null;
+		var origDef = type.OriginalDefinition.ToDisplayString();
+
+		if (origDef == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>"
+		    && type.TypeArguments.Length == 2
+		    && type.TypeArguments[0].ToDisplayString() == "string"
+		    && type.TypeArguments[1].ToDisplayString() == "string")
+		{
+			assignment = $"{memberName} = reader.ReadStringsDictOrEmpty(\"{key}\");";
+			return true;
+		}
+
+		if (type.TypeArguments.Length != 1) return false;
+
+		var element = type.TypeArguments[0].ToDisplayString();
+		var arrayReader = element switch
+		{
+			"string" => "ReadStringArrayOrEmpty",
+			"int" => "ReadIntArrayOrEmpty",
+			"float" => "ReadFloatArrayOrEmpty",
+			"byte" => "ReadByteArrayOrEmpty",
+			_ => null
+		};
+		if (arrayReader == null) return false;
+
+		switch (origDef)
+		{
+			case "System.Collections.Generic.List<T>":
+				assignment = $"{memberName} = new global::System.Collections.Generic.List<{element}>(reader.{arrayReader}(\"{key}\"));";
+				return true;
+			case "System.Collections.Generic.HashSet<T>":
+				assignment = $"{memberName} = new global::System.Collections.Generic.HashSet<{element}>(reader.{arrayReader}(\"{key}\"));";
+				return true;
+			case "System.Collections.Generic.IList<T>":
+			case "System.Collections.Generic.IReadOnlyList<T>":
+			case "System.Collections.Generic.ICollection<T>":
+			case "System.Collections.Generic.IReadOnlyCollection<T>":
+			case "System.Collections.Generic.IEnumerable<T>":
+				assignment = $"{memberName} = reader.{arrayReader}(\"{key}\");";
+				return true;
+			default:
+				return false;
+		}
+	}
+
 	private static string ToSnakeCase(string name)
 	{
 		if (string.IsNullOrEmpty(name))
 			return name;
-		
+
 		if (name.StartsWith("m_"))
 			name = name.Substring(2);
 
@@ -209,13 +261,33 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "string[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadStringArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine(member.hasDefaultValue
+						? $"{member.symbol.Name} = reader.ReadStringArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+						: $"{member.symbol.Name} = reader.ReadStringArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "float[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine(member.hasDefaultValue
+						? $"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+						: $"{member.symbol.Name} = reader.ReadFloatArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "int[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadIntArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine(member.hasDefaultValue
+						? $"{member.symbol.Name} = reader.ReadIntArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+						: $"{member.symbol.Name} = reader.ReadIntArrayOrEmpty(\"{member.key}\");");
+					break;
+				case "byte[]":
+					code.AppendLine(member.hasDefaultValue
+						? $"{member.symbol.Name} = reader.ReadByteArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+						: $"{member.symbol.Name} = reader.ReadByteArrayOrEmpty(\"{member.key}\");");
+					break;
+				case "Framework.Core.Maths.CBounds":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadBoundsOrDefault(\"{member.key}\");");
+					break;
+				case "Framework.Core.Maths.CFloat2[]":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat2ArrayOrEmpty(\"{member.key}\");");
+					break;
+				case "Framework.Core.Maths.CFloat3[]":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat3ArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CFloat2":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat2OrDefault(\"{member.key}\");");
@@ -246,7 +318,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
 				case "Framework.Core.Data.IJsonDataReader":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key}\");");
 					break;
 				default:
 					var memberType = member.symbol.GetSymbolType();
@@ -269,7 +341,12 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 						code.AppendLine(
 							$"{member.symbol.Name} = context.InstantiateArray<global::{elementTypeName}>(\"{member.key}\", reader);");
 					}
-					else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
+					else if (memberType is INamedTypeSymbol { IsGenericType: true } primitiveColl
+							&& TryGetPrimitiveCollectionRead(primitiveColl, member.key, member.symbol.Name, out string collectionAssignment))
+						{
+							code.AppendLine(collectionAssignment);
+						}
+						else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
 					{
 						code.AppendLine(
 							$"{member.symbol.Name} = context.Instantiate<global::{typeName}>(\"{member.key}\", reader);");

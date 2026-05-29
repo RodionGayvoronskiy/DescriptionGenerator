@@ -248,17 +248,25 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 			bool isList = origDef is
 				"System.Collections.Generic.List<T>" or
+				"System.Collections.Generic.HashSet<T>" or
 				"System.Collections.Generic.IList<T>" or
 				"System.Collections.Generic.IReadOnlyList<T>" or
-				"System.Collections.Generic.ICollection<T>";
+				"System.Collections.Generic.ICollection<T>" or
+				"System.Collections.Generic.IReadOnlyCollection<T>" or
+				"System.Collections.Generic.IEnumerable<T>";
 
 			if (isList)
 			{
 				var elementType = generic.TypeArguments[0];
+
+				// String collection → editable string list
+				if (elementType.SpecialType == SpecialType.System_String)
+					return $"{prefix}\"{key}\", {kinds}StringList),";
+
 				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
 					return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
 
-				// Primitive list (string, int, etc.) — not yet supported, skip
+				// Other primitive list (int, float, etc.) — not yet supported, skip
 				return null;
 			}
 		}
