@@ -209,10 +209,13 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			case "long":
 			case "ulong":
 			case "short":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredLong":
 				return $"{prefix}\"{key}\", {kinds}Int),";
 
 			case "float":
 			case "double":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
 				return $"{prefix}\"{key}\", {kinds}Float),";
 
 			case "bool":
@@ -225,14 +228,26 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			case "int[]":
 				return $"{prefix}\"{key}\", {kinds}IntList),";
 
+			case "float[]":
+				return $"{prefix}\"{key}\", {kinds}FloatList),";
+
 			case "Framework.Core.Data.IJsonDataReader":
 				return $"{prefix}\"{key}\", {kinds}Node),";
+
+			case "Framework.Core.Maths.CBounds":
+				return $"{prefix}\"{key}\", {kinds}Bounds),";
 
 			case "Framework.Core.Maths.CFloat2":
 				return $"{prefix}\"{key}\", {kinds}Float2),";
 
 			case "Framework.Core.Maths.CFloat3":
 				return $"{prefix}\"{key}\", {kinds}Float3),";
+
+			case "Framework.Core.Maths.CFloat2[]":
+				return $"{prefix}\"{key}\", {kinds}Float2List),";
+
+			case "Framework.Core.Maths.CFloat3[]":
+				return $"{prefix}\"{key}\", {kinds}Float3List),";
 
 			case "Framework.Core.Maths.CQuaternion":
 				return $"{prefix}\"{key}\", {kinds}Quaternion),";
@@ -254,6 +269,15 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
 					return $"{prefix}\"{key}\", {kinds}NestedMap, typeof(global::{elementType.ToDisplayString()})),";
 				return null;
+			}
+
+			// String → string map (reader: ReadStringsDict)
+			if (origDef == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>"
+			    && generic.TypeArguments.Length == 2
+			    && generic.TypeArguments[0].SpecialType == SpecialType.System_String
+			    && generic.TypeArguments[1].SpecialType == SpecialType.System_String)
+			{
+				return $"{prefix}\"{key}\", {kinds}StringMap),";
 			}
 
 			bool isList = origDef is
@@ -289,6 +313,13 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 					case "ulong":
 					case "short":
 						return $"{prefix}\"{key}\", {kinds}IntList),";
+					case "float":
+					case "double":
+						return $"{prefix}\"{key}\", {kinds}FloatList),";
+					case "Framework.Core.Maths.CFloat2":
+						return $"{prefix}\"{key}\", {kinds}Float2List),";
+					case "Framework.Core.Maths.CFloat3":
+						return $"{prefix}\"{key}\", {kinds}Float3List),";
 				}
 
 				return null;
@@ -316,6 +347,13 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				case "ulong":
 				case "short":
 					return $"{prefix}\"{key}\", {kinds}IntList),";
+				case "float":
+				case "double":
+					return $"{prefix}\"{key}\", {kinds}FloatList),";
+				case "Framework.Core.Maths.CFloat2":
+					return $"{prefix}\"{key}\", {kinds}Float2List),";
+				case "Framework.Core.Maths.CFloat3":
+					return $"{prefix}\"{key}\", {kinds}Float3List),";
 			}
 
 			return null;
