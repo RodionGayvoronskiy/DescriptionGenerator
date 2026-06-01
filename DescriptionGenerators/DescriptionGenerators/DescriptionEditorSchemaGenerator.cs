@@ -22,6 +22,10 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
 
+	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
+	private const int IgnoreEditorSchemaBit = 2; // IgnoreKeyTarget.EditorSchema
+	private const int IgnoreAllBits = 3;         // IgnoreKeyTarget.All (default when no arg)
+
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		var provider1 = context.SyntaxProvider
@@ -82,7 +86,13 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				    Accessibility.ProtectedOrInternal))
 					continue;
 
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? _, IgnoreKeyAttribute)) continue;
+				// Пропускаем члены с атрибутом IgnoreKey, если установлен бит EditorSchema
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
+				{
+					int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : IgnoreAllBits;
+					if ((targetBits & IgnoreEditorSchemaBit) != 0)
+						continue;
+				}
 
 				// ── JSON key ──
 				// An explicit [Key("...")] is an intentional opt-in: External* descriptions
@@ -266,9 +276,49 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
 					return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
 
-				// Other primitive list (int, float, etc.) — not yet supported, skip
+				string elementTypeName = elementType.ToDisplayString();
+				switch (elementTypeName)
+				{
+					case "string":
+						return $"{prefix}\"{key}\", {kinds}StringList),";
+					case "int":
+					case "byte":
+					case "ushort":
+					case "uint":
+					case "long":
+					case "ulong":
+					case "short":
+						return $"{prefix}\"{key}\", {kinds}IntList),";
+				}
+
 				return null;
 			}
+		}
+
+		// Array collections: T[] (e.g. ClubPostProgressionLevelDescription[])
+		if (memberType is IArrayTypeSymbol { Rank: 1 } array)
+		{
+			var elementType = array.ElementType;
+
+			if (elementType.SpecialType == SpecialType.System_String)
+				return $"{prefix}\"{key}\", {kinds}StringList),";
+
+			if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
+				return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
+
+			switch (elementType.ToDisplayString())
+			{
+				case "int":
+				case "byte":
+				case "ushort":
+				case "uint":
+				case "long":
+				case "ulong":
+				case "short":
+					return $"{prefix}\"{key}\", {kinds}IntList),";
+			}
+
+			return null;
 		}
 
 		// Single nested Description (interface or class)

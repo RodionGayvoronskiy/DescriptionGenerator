@@ -60,9 +60,13 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			    or Accessibility.ProtectedOrInternal))
 				continue;
 
-			// Пропускаем члены с атрибутом IgnoreKey
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? _, IgnoreKeyAttribute))
-				continue;
+			// Пропускаем члены с атрибутом IgnoreKey, если установлен бит Constructor
+			if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
+			{
+				int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : IgnoreAllBits;
+				if ((targetBits & IgnoreConstructorBit) != 0)
+					continue;
+			}
 
 			// Определяем ключ: либо из атрибута Key, либо автоматически из имени
 			string? key;
@@ -366,4 +370,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
+
+	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
+	private const int IgnoreConstructorBit = 1; // IgnoreKeyTarget.Constructor
+	private const int IgnoreAllBits = 3;        // IgnoreKeyTarget.All (default when no arg)
 }
