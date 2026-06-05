@@ -103,6 +103,16 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	private static bool TryGetCollectionRead(INamedTypeSymbol type, string key, string memberName, out string assignment)
 	{
 		assignment = null;
+
+		// Only BCL collections are consumed here. A System.Collections.Generic type is NEVER a
+		// factory description, so even when it can't be read (e.g. List<some-struct> runtime cache,
+		// Dictionary<string,int>, Queue<T>) we still return true to keep it OUT of the single-
+		// Instantiate fallback — otherwise the ctor would emit context.Instantiate<List<…>> and
+		// throw KeyNotFound at runtime. Real nested-description interfaces/classes are left to the
+		// fallback by returning false here.
+		if (type.OriginalDefinition.ContainingNamespace?.ToDisplayString() != "System.Collections.Generic")
+			return false;
+
 		var origDef = type.OriginalDefinition.ToDisplayString();
 
 		if (origDef == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>"
@@ -113,8 +123,6 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			assignment = $"{memberName} = reader.ReadStringsDictOrEmpty(\"{key}\");";
 			return true;
 		}
-
-		if (type.TypeArguments.Length != 1) return false;
 
 		bool isConcreteList = origDef == "System.Collections.Generic.List<T>";
 		bool isConcreteSet = origDef == "System.Collections.Generic.HashSet<T>";
@@ -128,8 +136,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			"System.Collections.Generic.ISet<T>" or
 			"System.Collections.Generic.IReadOnlySet<T>";
 
-		if (!isConcreteList && !isConcreteSet && !isListInterface && !isSetInterface)
-			return false;
+		// Other BCL collection (Dictionary<string,non-string>, Queue, Stack, multi-arg, …) —
+		// consume and skip (no read emitted).
+		if (type.TypeArguments.Length != 1 || (!isConcreteList && !isConcreteSet && !isListInterface && !isSetInterface))
+			return true;
 
 		var element = type.TypeArguments[0];
 		var elementName = element.ToDisplayString();
@@ -145,10 +155,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			case "Framework.Core.Maths.CFloat2": source = $"reader.ReadFloat2ArrayOrEmpty(\"{key}\")"; break;
 			case "Framework.Core.Maths.CFloat3": source = $"reader.ReadFloat3ArrayOrEmpty(\"{key}\")"; break;
 			default:
-				if (element is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
-					source = $"context.InstantiateArray<global::{elementName}>(\"{key}\", reader)";
-				else
-					return false;
+				// Element is a non-readable value type (e.g. a sample struct) — consume & skip.
+				if (element is not INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
+					return true;
+				source = $"context.InstantiateArray<global::{elementName}>(\"{key}\", reader)";
 				break;
 		}
 
@@ -370,7 +380,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					else if (memberType is INamedTypeSymbol { IsGenericType: true } collectionType
 							&& TryGetCollectionRead(collectionType, member.key, member.symbol.Name, out string collectionAssignment))
 						{
-							code.AppendLine(collectionAssignment);
+							if (!string.IsNullOrEmpty(collectionAssignment))
+								code.AppendLine(collectionAssignment);
 						}
 						else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
 					{
