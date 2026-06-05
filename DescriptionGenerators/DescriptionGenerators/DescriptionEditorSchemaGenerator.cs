@@ -288,7 +288,9 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				"System.Collections.Generic.IReadOnlyList<T>" or
 				"System.Collections.Generic.ICollection<T>" or
 				"System.Collections.Generic.IReadOnlyCollection<T>" or
-				"System.Collections.Generic.IEnumerable<T>";
+				"System.Collections.Generic.IEnumerable<T>" or
+				"System.Collections.Generic.ISet<T>" or
+				"System.Collections.Generic.IReadOnlySet<T>";
 
 			if (isList)
 			{

@@ -93,12 +93,14 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
 	}
 
-	// Maps primitive generic collections (List/HashSet/IList/IReadOnlyList/ICollection/
-	// IReadOnlyCollection/IEnumerable<T> for string/int/float/byte, and
-	// IReadOnlyDictionary<string,string>) to the matching reader call. Arrays already
-	// implement the read-only/list/collection/enumerable interfaces, so those are
-	// assigned directly; concrete List/HashSet are wrapped.
-	private static bool TryGetPrimitiveCollectionRead(INamedTypeSymbol type, string key, string memberName, out string assignment)
+	// Maps generic collections to the matching reader call:
+	//  - element string/int/float/byte → Read<E>ArrayOrEmpty
+	//  - element CFloat2/CFloat3       → ReadFloat2/Float3ArrayOrEmpty
+	//  - element interface/class       → context.InstantiateArray<E>
+	// Collection kinds: concrete List/HashSet are wrapped; IList/IReadOnlyList/ICollection/
+	// IReadOnlyCollection/IEnumerable get the array assigned directly (arrays implement them);
+	// ISet/IReadOnlySet are wrapped in HashSet. Plus IReadOnlyDictionary<string,string>.
+	private static bool TryGetCollectionRead(INamedTypeSymbol type, string key, string memberName, out string assignment)
 	{
 		assignment = null;
 		var origDef = type.OriginalDefinition.ToDisplayString();
@@ -114,35 +116,52 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 		if (type.TypeArguments.Length != 1) return false;
 
-		var element = type.TypeArguments[0].ToDisplayString();
-		var arrayReader = element switch
-		{
-			"string" => "ReadStringArrayOrEmpty",
-			"int" => "ReadIntArrayOrEmpty",
-			"float" => "ReadFloatArrayOrEmpty",
-			"byte" => "ReadByteArrayOrEmpty",
-			_ => null
-		};
-		if (arrayReader == null) return false;
+		bool isConcreteList = origDef == "System.Collections.Generic.List<T>";
+		bool isConcreteSet = origDef == "System.Collections.Generic.HashSet<T>";
+		bool isListInterface = origDef is
+			"System.Collections.Generic.IList<T>" or
+			"System.Collections.Generic.IReadOnlyList<T>" or
+			"System.Collections.Generic.ICollection<T>" or
+			"System.Collections.Generic.IReadOnlyCollection<T>" or
+			"System.Collections.Generic.IEnumerable<T>";
+		bool isSetInterface = origDef is
+			"System.Collections.Generic.ISet<T>" or
+			"System.Collections.Generic.IReadOnlySet<T>";
 
-		switch (origDef)
+		if (!isConcreteList && !isConcreteSet && !isListInterface && !isSetInterface)
+			return false;
+
+		var element = type.TypeArguments[0];
+		var elementName = element.ToDisplayString();
+
+		// Source expression yielding an E[] for the element type.
+		string source;
+		switch (elementName)
 		{
-			case "System.Collections.Generic.List<T>":
-				assignment = $"{memberName} = new global::System.Collections.Generic.List<{element}>(reader.{arrayReader}(\"{key}\"));";
-				return true;
-			case "System.Collections.Generic.HashSet<T>":
-				assignment = $"{memberName} = new global::System.Collections.Generic.HashSet<{element}>(reader.{arrayReader}(\"{key}\"));";
-				return true;
-			case "System.Collections.Generic.IList<T>":
-			case "System.Collections.Generic.IReadOnlyList<T>":
-			case "System.Collections.Generic.ICollection<T>":
-			case "System.Collections.Generic.IReadOnlyCollection<T>":
-			case "System.Collections.Generic.IEnumerable<T>":
-				assignment = $"{memberName} = reader.{arrayReader}(\"{key}\");";
-				return true;
+			case "string": source = $"reader.ReadStringArrayOrEmpty(\"{key}\")"; break;
+			case "int": source = $"reader.ReadIntArrayOrEmpty(\"{key}\")"; break;
+			case "float": source = $"reader.ReadFloatArrayOrEmpty(\"{key}\")"; break;
+			case "byte": source = $"reader.ReadByteArrayOrEmpty(\"{key}\")"; break;
+			case "Framework.Core.Maths.CFloat2": source = $"reader.ReadFloat2ArrayOrEmpty(\"{key}\")"; break;
+			case "Framework.Core.Maths.CFloat3": source = $"reader.ReadFloat3ArrayOrEmpty(\"{key}\")"; break;
 			default:
-				return false;
+				if (element is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
+					source = $"context.InstantiateArray<global::{elementName}>(\"{key}\", reader)";
+				else
+					return false;
+				break;
 		}
+
+		var elementRef = elementName is "string" or "int" or "float" or "byte" ? elementName : $"global::{elementName}";
+
+		if (isConcreteList)
+			assignment = $"{memberName} = new global::System.Collections.Generic.List<{elementRef}>({source});";
+		else if (isConcreteSet || isSetInterface)
+			assignment = $"{memberName} = new global::System.Collections.Generic.HashSet<{elementRef}>({source});";
+		else
+			assignment = $"{memberName} = {source};";
+
+		return true;
 	}
 
 	private static string ToSnakeCase(string name)
@@ -348,8 +367,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 						code.AppendLine(
 							$"{member.symbol.Name} = context.InstantiateArray<global::{elementTypeName}>(\"{member.key}\", reader);");
 					}
-					else if (memberType is INamedTypeSymbol { IsGenericType: true } primitiveColl
-							&& TryGetPrimitiveCollectionRead(primitiveColl, member.key, member.symbol.Name, out string collectionAssignment))
+					else if (memberType is INamedTypeSymbol { IsGenericType: true } collectionType
+							&& TryGetCollectionRead(collectionType, member.key, member.symbol.Name, out string collectionAssignment))
 						{
 							code.AppendLine(collectionAssignment);
 						}
