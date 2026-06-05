@@ -318,6 +318,9 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;
+				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredDouble":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredLong":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
 					break;

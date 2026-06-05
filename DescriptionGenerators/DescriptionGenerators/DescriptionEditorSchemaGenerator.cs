@@ -216,6 +216,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			case "float":
 			case "double":
 			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredDouble":
 				return $"{prefix}\"{key}\", {kinds}Float),";
 
 			case "bool":
