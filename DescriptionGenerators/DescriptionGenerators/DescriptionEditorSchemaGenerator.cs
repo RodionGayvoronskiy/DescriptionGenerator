@@ -21,6 +21,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 	private static readonly AttributeText EditorFieldAttribute = new("EditorFieldAttribute", "Framework.Core");
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
+	private static readonly AttributeText FlatArrayAttribute = new("FlatArrayAttribute", "Modules.Framework.Core");
 
 	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
 	private const int IgnoreEditorSchemaBit = 2; // IgnoreKeyTarget.EditorSchema
@@ -93,6 +94,11 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 					if ((targetBits & IgnoreEditorSchemaBit) != 0)
 						continue;
 				}
+
+				// [FlatArray] fields use a packed [x,y,(z),...] layout the editor cannot render;
+				// a Float2/3List entry would corrupt them on re-save, so hide them.
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? _, FlatArrayAttribute))
+					continue;
 
 				// ── JSON key ──
 				// An explicit [Key("...")] is an intentional opt-in: External* descriptions

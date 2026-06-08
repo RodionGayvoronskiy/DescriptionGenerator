@@ -92,7 +92,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				? jsonAttribute?.ConstructorArguments.FirstOrDefault().Value as string
 				: null;
 
-			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey));
+			// [FlatArray] opts CFloat2/3 collections into the flat [x,y,(z),...] reader.
+			bool isFlat = member.TryGetAnyAttributeInSelf(out AttributeData? _, FlatArrayAttribute);
+
+			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
 		}
 
 		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
@@ -105,7 +108,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	// Collection kinds: concrete List/HashSet are wrapped; IList/IReadOnlyList/ICollection/
 	// IReadOnlyCollection/IEnumerable get the array assigned directly (arrays implement them);
 	// ISet/IReadOnlySet are wrapped in HashSet. Plus IReadOnlyDictionary<string,string>.
-	private static bool TryGetCollectionRead(INamedTypeSymbol type, string key, string memberName, out string assignment)
+	private static bool TryGetCollectionRead(INamedTypeSymbol type, string key, string memberName, bool isFlat, out string assignment)
 	{
 		assignment = null;
 
@@ -157,8 +160,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			case "int": source = $"reader.ReadIntArrayOrEmpty(\"{key}\")"; break;
 			case "float": source = $"reader.ReadFloatArrayOrEmpty(\"{key}\")"; break;
 			case "byte": source = $"reader.ReadByteArrayOrEmpty(\"{key}\")"; break;
-			case "Framework.Core.Maths.CFloat2": source = $"reader.ReadFloat2ArrayOrEmpty(\"{key}\")"; break;
-			case "Framework.Core.Maths.CFloat3": source = $"reader.ReadFloat3ArrayOrEmpty(\"{key}\")"; break;
+			case "Framework.Core.Maths.CFloat2": source = $"reader.{(isFlat ? "ReadFlatFloat2ArrayOrEmpty" : "ReadFloat2ArrayOrEmpty")}(\"{key}\")"; break;
+			case "Framework.Core.Maths.CFloat3": source = $"reader.{(isFlat ? "ReadFlatFloat3ArrayOrEmpty" : "ReadFloat3ArrayOrEmpty")}(\"{key}\")"; break;
 			default:
 				// Element is a non-readable value type (e.g. a sample struct) — consume & skip.
 				if (element is not INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
@@ -218,7 +221,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly ISymbol symbol = symbol;
 	}
 
-	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey)
+	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey, bool isFlat)
 	{
 		public readonly string key = key;
 		public readonly ISymbol symbol = symbol;
@@ -226,6 +229,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly bool hasDefaultValue = hasDefaultValue;
 		public readonly string defaultValue = defaultValue;
 		public readonly string? jsonKey = jsonKey;
+		public readonly bool isFlat = isFlat;
 	}
 	
 	private static string FormatDefaultArg(string? typeName, object? defaultValue)
@@ -335,10 +339,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					code.AppendLine($"{member.symbol.Name} = reader.ReadBoundsOrDefault(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CFloat2[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat2ArrayOrEmpty(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.{(member.isFlat ? "ReadFlatFloat2ArrayOrEmpty" : "ReadFloat2ArrayOrEmpty")}(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CFloat3[]":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat3ArrayOrEmpty(\"{member.key}\");");
+					code.AppendLine($"{member.symbol.Name} = reader.{(member.isFlat ? "ReadFlatFloat3ArrayOrEmpty" : "ReadFloat3ArrayOrEmpty")}(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CFloat2":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadFloat2OrDefault(\"{member.key}\");");
@@ -396,7 +400,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 							$"{member.symbol.Name} = context.InstantiateArray<global::{elementTypeName}>(\"{member.key}\", reader);");
 					}
 					else if (memberType is INamedTypeSymbol { IsGenericType: true } collectionType
-							&& TryGetCollectionRead(collectionType, member.key, member.symbol.Name, out string collectionAssignment))
+							&& TryGetCollectionRead(collectionType, member.key, member.symbol.Name, member.isFlat, out string collectionAssignment))
 						{
 							if (!string.IsNullOrEmpty(collectionAssignment))
 								code.AppendLine(collectionAssignment);
@@ -434,6 +438,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText JsonItemAttribute = new("JsonItemAttribute", "Framework.Core.Serializers");
+	private static readonly AttributeText FlatArrayAttribute = new("FlatArrayAttribute", "Modules.Framework.Core");
 
 	private static readonly DiagnosticDescriptor JsonItemKeyMismatch = new(
 		id: "DESCGEN001",
