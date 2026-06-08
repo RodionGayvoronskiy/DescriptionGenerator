@@ -87,7 +87,12 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			
 			object? defValue = member.TryGetAnyAttributeInSelf(out AttributeData? attribute, KeyAttribute) ? attribute?.ConstructorArguments[1].Value : null;
 
-			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue)));
+			// Key from [JsonItem] - the data source of truth for serialization (used for DESCGEN001).
+			string? jsonKey = member.TryGetAnyAttributeInSelf(out AttributeData? jsonAttribute, JsonItemAttribute)
+				? jsonAttribute?.ConstructorArguments.FirstOrDefault().Value as string
+				: null;
+
+			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey));
 		}
 
 		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
@@ -213,13 +218,14 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly ISymbol symbol = symbol;
 	}
 
-	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue)
+	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey)
 	{
 		public readonly string key = key;
 		public readonly ISymbol symbol = symbol;
 	
 		public readonly bool hasDefaultValue = hasDefaultValue;
 		public readonly string defaultValue = defaultValue;
+		public readonly string? jsonKey = jsonKey;
 	}
 	
 	private static string FormatDefaultArg(string? typeName, object? defaultValue)
@@ -257,6 +263,18 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		foreach (KeyData member in data.members)
 		{
 			var typeName = member.symbol.GetSymbolType()?.ToDisplayString();
+
+			// DESCGEN001: ключ из [JsonItem] (источник истины данных) расходится с ключом,
+			// по которому генератор читает узел. Иначе член молча останется пустым.
+			if (member.jsonKey is { Length: > 0 } jsonKey && jsonKey != member.key)
+			{
+				context.ReportDiagnostic(Diagnostic.Create(JsonItemKeyMismatch,
+					member.symbol.Locations.FirstOrDefault(), member.symbol.Name, jsonKey, member.key));
+			}
+
+			// DESCGEN002: член не получил ни одного чтения и останется null/default.
+			var emitted = true;
+
 			switch (typeName)
 			{
 				case "string":
@@ -382,14 +400,26 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 						{
 							if (!string.IsNullOrEmpty(collectionAssignment))
 								code.AppendLine(collectionAssignment);
+							else
+								emitted = false;
 						}
 						else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
 					{
 						code.AppendLine(
 							$"{member.symbol.Name} = context.Instantiate<global::{typeName}>(\"{member.key}\", reader);");
 					}
+					else
+					{
+						emitted = false;
+					}
 
 					break;
+			}
+
+			if (!emitted)
+			{
+				context.ReportDiagnostic(Diagnostic.Create(MemberNotRead,
+					member.symbol.Locations.FirstOrDefault(), member.symbol.Name, typeName));
 			}
 		}
 
@@ -403,6 +433,23 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
+	private static readonly AttributeText JsonItemAttribute = new("JsonItemAttribute", "Framework.Core.Serializers");
+
+	private static readonly DiagnosticDescriptor JsonItemKeyMismatch = new(
+		id: "DESCGEN001",
+		title: "JsonItem key differs from generated read key",
+		messageFormat: "Member '{0}' has [JsonItem(\"{1}\")] but the generated constructor reads key '{2}'. Add [Key(\"{1}\")] so it reads the data key, otherwise the member is silently left empty.",
+		category: "DescriptionGenerators",
+		defaultSeverity: DiagnosticSeverity.Warning,
+		isEnabledByDefault: true);
+
+	private static readonly DiagnosticDescriptor MemberNotRead = new(
+		id: "DESCGEN002",
+		title: "Description member is not read",
+		messageFormat: "Member '{0}' of type '{1}' is not read by the generated constructor and stays null/default. Mark it [IgnoreKey] if intentional, or give it a readable type.",
+		category: "DescriptionGenerators",
+		defaultSeverity: DiagnosticSeverity.Warning,
+		isEnabledByDefault: true);
 
 	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
 	private const int IgnoreConstructorBit = 1; // IgnoreKeyTarget.Constructor

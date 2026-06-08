@@ -18,6 +18,11 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+        <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="Aspid.Generators.Helper" Version="0.1.0" />
         <PackageReference Include="Aspid.Generators.Helper.Unity" Version="0.1.0" />
         <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4">
