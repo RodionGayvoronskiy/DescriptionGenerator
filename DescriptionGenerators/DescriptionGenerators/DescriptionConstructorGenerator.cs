@@ -92,8 +92,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				? jsonAttribute?.ConstructorArguments.FirstOrDefault().Value as string
 				: null;
 
-			// [FlatArray] opts CFloat2/3 collections into the flat [x,y,(z),...] reader.
-			bool isFlat = member.TryGetAnyAttributeInSelf(out AttributeData? _, FlatArrayAttribute);
+			// [Key(flat: true)] opts a CFloat2/3 collection into the flat [x,y,(z),...] reader.
+			bool isFlat = attribute is { ConstructorArguments.Length: >= 3 } && attribute.ConstructorArguments[2].Value is true;
 
 			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
 		}
@@ -438,7 +438,6 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText JsonItemAttribute = new("JsonItemAttribute", "Framework.Core.Serializers");
-	private static readonly AttributeText FlatArrayAttribute = new("FlatArrayAttribute", "Modules.Framework.Core");
 
 	private static readonly DiagnosticDescriptor JsonItemKeyMismatch = new(
 		id: "DESCGEN001",
