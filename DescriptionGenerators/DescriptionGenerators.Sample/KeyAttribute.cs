@@ -6,9 +6,10 @@ using Modules.Framework.Core;
 namespace Modules.Framework.Core
 {
 	[AttributeUsage(AttributeTargets.Class)]
-	public class DescriptionTypeAttribute(string key = "") : Attribute
+	public class DescriptionTypeAttribute(string key = "", bool isDefault = false) : Attribute
 	{
 		public string key { get; } = key;
+		public bool isDefault { get; } = isDefault;
 	}
 
 	[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]

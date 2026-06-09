@@ -114,7 +114,8 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 					continue;
 
 				var typePath = attr.ConstructorArguments.FirstOrDefault().Value as string ?? string.Empty;
-				result.Add(new DescriptionTypeData(type, typePath));
+				var isDefault = attr.ConstructorArguments.Length > 1 && attr.ConstructorArguments[1].Value is true;
+				result.Add(new DescriptionTypeData(type, typePath, isDefault));
 				break;
 			}
 		}
@@ -134,8 +135,10 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		// Get the type argument from DescriptionTypeAttribute
 		var attribute = context.Attributes.FirstOrDefault();
 		var typePath = attribute?.ConstructorArguments.FirstOrDefault().Value as string ?? string.Empty;
+		var isDefault = attribute is not null && attribute.ConstructorArguments.Length > 1
+		                                      && attribute.ConstructorArguments[1].Value is true;
 
-		return new DescriptionTypeData(typeSymbol, typePath);
+		return new DescriptionTypeData(typeSymbol, typePath, isDefault);
 	}
 
 	private void GenerateCode(
@@ -182,13 +185,28 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			code.AppendLine("var factory = registration.factory;");
 			code.AppendLine();
 
+			var seenKeys = new HashSet<string>();
 			foreach (var impl in implementations)
 			{
-				var typePath = !string.IsNullOrEmpty(impl.typePath) 
-					? impl.typePath 
+				var typePath = !string.IsNullOrEmpty(impl.typePath)
+					? impl.typePath
 					: ToSnakeCase(impl.typeSymbol.Name);
-				
+
+				// DESCGEN003: два [DescriptionType] претендуют на один ключ в рамках интерфейса —
+				// factory.Add бросит исключение при регистрации на старте. Ловим на компиляции.
+				if (!seenKeys.Add(typePath))
+				{
+					context.ReportDiagnostic(Diagnostic.Create(DuplicateKey,
+						impl.typeSymbol.Locations.FirstOrDefault(),
+						impl.typeSymbol.Name, typePath, interfaceSimpleName));
+					continue;
+				}
+
 				code.AppendLine($"factory.Add<{interfaceName}>(\"{typePath}\", typeof({impl.typeSymbol.ToDisplayString()}));");
+
+				// isDefault → дефолтная регистрация для этого интерфейса (factory.SetDefault идемпотентен).
+				if (impl.isDefault)
+					code.AppendLine($"factory.SetDefault<{interfaceName}>(typeof({impl.typeSymbol.ToDisplayString()}));");
 			}
 
 			code.EndBlock(); // RegisterAll
@@ -222,15 +240,24 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		return builder.ToString();
 	}
 
+	private static readonly DiagnosticDescriptor DuplicateKey = new(
+		id: "DESCGEN003",
+		title: "Duplicate description key",
+		messageFormat: "Description type '{0}' uses key '{1}' for interface '{2}', which is already registered by another [DescriptionType]. Keys must be unique per interface, otherwise registration throws at startup.",
+		category: "DescriptionGenerators",
+		defaultSeverity: DiagnosticSeverity.Error,
+		isEnabledByDefault: true);
+
 	private readonly struct AddNewData(INamedTypeSymbol interfaceType, string path)
 	{
 		public readonly INamedTypeSymbol interfaceType = interfaceType;
 		public readonly string path = path;
 	}
 
-	private readonly struct DescriptionTypeData(INamedTypeSymbol typeSymbol, string typePath)
+	private readonly struct DescriptionTypeData(INamedTypeSymbol typeSymbol, string typePath, bool isDefault)
 	{
 		public readonly INamedTypeSymbol typeSymbol = typeSymbol;
 		public readonly string typePath = typePath;
+		public readonly bool isDefault = isDefault;
 	}
 }
