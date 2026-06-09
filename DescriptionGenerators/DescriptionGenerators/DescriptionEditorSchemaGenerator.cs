@@ -5,7 +5,6 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using Aspid.Generators.Helper;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace DescriptionGenerators;
@@ -22,38 +21,27 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
 
-	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
-	private const int IgnoreEditorSchemaBit = 2; // IgnoreKeyTarget.EditorSchema
-	private const int IgnoreAllBits = 3;         // IgnoreKeyTarget.All (default when no arg)
-
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		var provider1 = context.SyntaxProvider
 			.ForAttributeWithMetadataName(
 				"Modules.Framework.Core.DescriptionTypeAttribute",
-				SyntaxPredicate,
+				GeneratorShared.IsPartialNonStaticClass,
 				FindData)
-			.Where(x => x.HasValue)
-			.Select((x, _) => x!.Value);
+			.Where(static x => x.HasValue)
+			.Select(static (x, _) => x!.Value);
 
 		var provider2 = context.SyntaxProvider
 			.ForAttributeWithMetadataName(
 				"Modules.Framework.Core.DescriptionEditorSchemaAttribute",
-				SyntaxPredicate,
+				GeneratorShared.IsPartialNonStaticClass,
 				FindData)
-			.Where(x => x.HasValue)
-			.Select((x, _) => x!.Value);
+			.Where(static x => x.HasValue)
+			.Select(static (x, _) => x!.Value);
 
 		context.RegisterSourceOutput(provider1, GenerateCode);
 		context.RegisterSourceOutput(provider2, GenerateCode);
 	}
-
-	// ── Syntax filter ────────────────────────────────────────────────────────────
-
-	private static bool SyntaxPredicate(SyntaxNode node, CancellationToken _)
-		=> node is ClassDeclarationSyntax { AttributeLists.Count: > 0 } c
-		   && c.Modifiers.Any(SyntaxKind.PartialKeyword)
-		   && !c.Modifiers.Any(SyntaxKind.StaticKeyword);
 
 	// ── Data extraction ──────────────────────────────────────────────────────────
 
@@ -89,8 +77,8 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				// Пропускаем члены с атрибутом IgnoreKey, если установлен бит EditorSchema
 				if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
 				{
-					int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : IgnoreAllBits;
-					if ((targetBits & IgnoreEditorSchemaBit) != 0)
+					int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : GeneratorShared.IgnoreAllBits;
+					if ((targetBits & GeneratorShared.IgnoreEditorSchemaBit) != 0)
 						continue;
 				}
 
@@ -117,7 +105,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				}
 				else
 				{
-					key = ToSnakeCase(member.Name);
+					key = GeneratorShared.ToSnakeCase(member.Name);
 				}
 
 				// Internal framework identity/discriminator keys — hidden unless a field
@@ -181,25 +169,20 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 	// ── Entry builders ───────────────────────────────────────────────────────────
 
-	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType, EditorFieldHint hint, string path = "")
+	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType, EditorFieldHint hint, string path)
 	{
 		const string prefix = "new global::Framework.Core.DescriptionEditorField(";
 		const string kinds = "global::Framework.Core.EditorFieldKind.";
 
 		if (typeName == null) return null;
 
-		// Hint overrides for string
-		if (typeName == "string" && hint == EditorFieldHint.Sprite)
+		// Hint overrides for string: an explicit asset-path target uses a Sprite/Texture kind.
+		if (typeName == "string" && hint != EditorFieldHint.Default)
 		{
+			string hintKind = hint == EditorFieldHint.Sprite ? "Sprite" : "Texture";
 			return !string.IsNullOrEmpty(path)
-				? $"{prefix}\"{key}\", {kinds}Sprite, \"{path}\"),"
-				: $"{prefix}\"{key}\", {kinds}Sprite),";
-		}
-		if (typeName == "string" && hint == EditorFieldHint.Texture)
-		{
-			return !string.IsNullOrEmpty(path)
-				? $"{prefix}\"{key}\", {kinds}Texture, \"{path}\"),"
-				: $"{prefix}\"{key}\", {kinds}Texture),";
+				? $"{prefix}\"{key}\", {kinds}{hintKind}, \"{path}\"),"
+				: $"{prefix}\"{key}\", {kinds}{hintKind}),";
 		}
 
 		switch (typeName)
@@ -299,74 +282,12 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				"System.Collections.Generic.IReadOnlySet<T>";
 
 			if (isList)
-			{
-				var elementType = generic.TypeArguments[0];
-
-				// String collection → editable string list
-				if (elementType.SpecialType == SpecialType.System_String)
-					return $"{prefix}\"{key}\", {kinds}StringList),";
-
-				if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
-					return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
-
-				string elementTypeName = elementType.ToDisplayString();
-				switch (elementTypeName)
-				{
-					case "string":
-						return $"{prefix}\"{key}\", {kinds}StringList),";
-					case "int":
-					case "byte":
-					case "ushort":
-					case "uint":
-					case "long":
-					case "ulong":
-					case "short":
-						return $"{prefix}\"{key}\", {kinds}IntList),";
-					case "float":
-					case "double":
-						return $"{prefix}\"{key}\", {kinds}FloatList),";
-					case "Framework.Core.Maths.CFloat2":
-						return $"{prefix}\"{key}\", {kinds}Float2List),";
-					case "Framework.Core.Maths.CFloat3":
-						return $"{prefix}\"{key}\", {kinds}Float3List),";
-				}
-
-				return null;
-			}
+				return BuildListEntry(generic.TypeArguments[0], key);
 		}
 
 		// Array collections: T[] (e.g. ClubPostProgressionLevelDescription[])
 		if (memberType is IArrayTypeSymbol { Rank: 1 } array)
-		{
-			var elementType = array.ElementType;
-
-			if (elementType.SpecialType == SpecialType.System_String)
-				return $"{prefix}\"{key}\", {kinds}StringList),";
-
-			if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
-				return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
-
-			switch (elementType.ToDisplayString())
-			{
-				case "int":
-				case "byte":
-				case "ushort":
-				case "uint":
-				case "long":
-				case "ulong":
-				case "short":
-					return $"{prefix}\"{key}\", {kinds}IntList),";
-				case "float":
-				case "double":
-					return $"{prefix}\"{key}\", {kinds}FloatList),";
-				case "Framework.Core.Maths.CFloat2":
-					return $"{prefix}\"{key}\", {kinds}Float2List),";
-				case "Framework.Core.Maths.CFloat3":
-					return $"{prefix}\"{key}\", {kinds}Float3List),";
-			}
-
-			return null;
-		}
+			return BuildListEntry(array.ElementType, key);
 
 		// Single nested Description (interface or class)
 		if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
@@ -375,26 +296,41 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		return null;
 	}
 
-	// ── Helpers ──────────────────────────────────────────────────────────────────
-
-	private static string ToSnakeCase(string name)
+	/// <summary>
+	/// Maps the element type of a collection (List/HashSet/IList/.../array) to its editor
+	/// list-kind entry. Shared by both the generic-collection and array branches.
+	/// </summary>
+	private static string? BuildListEntry(ITypeSymbol elementType, string key)
 	{
-		if (string.IsNullOrEmpty(name)) return name;
-		if (name.StartsWith("m_"))
-			name = name.Substring(2);
-		var sb = new System.Text.StringBuilder();
-		for (int i = 0; i < name.Length; i++)
-		{
-			char c = name[i];
-			if (char.IsUpper(c))
-			{
-				if (i > 0) sb.Append('_');
-				sb.Append(char.ToLowerInvariant(c));
-			}
-			else sb.Append(c);
-		}
+		const string prefix = "new global::Framework.Core.DescriptionEditorField(";
+		const string kinds = "global::Framework.Core.EditorFieldKind.";
 
-		return sb.ToString();
+		if (elementType.SpecialType == SpecialType.System_String)
+			return $"{prefix}\"{key}\", {kinds}StringList),";
+
+		if (elementType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class, SpecialType: SpecialType.None })
+			return $"{prefix}\"{key}\", {kinds}NestedList, typeof(global::{elementType.ToDisplayString()})),";
+
+		switch (elementType.ToDisplayString())
+		{
+			case "int":
+			case "byte":
+			case "ushort":
+			case "uint":
+			case "long":
+			case "ulong":
+			case "short":
+				return $"{prefix}\"{key}\", {kinds}IntList),";
+			case "float":
+			case "double":
+				return $"{prefix}\"{key}\", {kinds}FloatList),";
+			case "Framework.Core.Maths.CFloat2":
+				return $"{prefix}\"{key}\", {kinds}Float2List),";
+			case "Framework.Core.Maths.CFloat3":
+				return $"{prefix}\"{key}\", {kinds}Float3List),";
+			default:
+				return null;
+		}
 	}
 
 	// ── Data types ───────────────────────────────────────────────────────────────
@@ -412,7 +348,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		public readonly ClassDeclarationSyntax declaration = declaration;
 	}
 
-	private readonly struct FieldData(string key, ISymbol member, EditorFieldHint editorHint, string editorPath = "")
+	private readonly struct FieldData(string key, ISymbol member, EditorFieldHint editorHint, string editorPath)
 	{
 		public readonly string key = key;
 		public readonly ISymbol member = member;

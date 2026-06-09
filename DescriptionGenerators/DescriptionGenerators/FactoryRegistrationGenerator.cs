@@ -68,14 +68,25 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		if (typeSymbol == null)
 			return null;
 
-		// Get the path string argument
-		if (invocation.ArgumentList.Arguments.Count != 1)
-			return null;
+		// Get the path string argument (optional — paramless AddNew<T>() registers types only)
+		string path;
+		if (invocation.ArgumentList.Arguments.Count == 0)
+		{
+			path = string.Empty;
+		}
+		else if (invocation.ArgumentList.Arguments.Count == 1)
+		{
+			var pathArg = invocation.ArgumentList.Arguments[0].Expression;
+			var pathValue = context.SemanticModel.GetConstantValue(pathArg, ct);
+			if (!pathValue.HasValue || pathValue.Value is not string pathString)
+				return null;
 
-		var pathArg = invocation.ArgumentList.Arguments[0].Expression;
-		var pathValue = context.SemanticModel.GetConstantValue(pathArg, ct);
-		if (!pathValue.HasValue || pathValue.Value is not string path)
+			path = pathString;
+		}
+		else
+		{
 			return null;
+		}
 
 		return new AddNewData(typeSymbol, path);
 	}
@@ -141,7 +152,7 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		return new DescriptionTypeData(typeSymbol, typePath, isDefault);
 	}
 
-	private void GenerateCode(
+	private static void GenerateCode(
 		SourceProductionContext context,
 		(ImmutableArray<AddNewData> AddNewCalls, ImmutableArray<DescriptionTypeData> DescriptionTypes) data)
 	{
@@ -185,12 +196,20 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			code.AppendLine("var factory = registration.factory;");
 			code.AppendLine();
 
+			// path (from AddNew<T>("path")) = JSON-section key коллекции → регистрируем её
+			// DescriptionsCreator, чтобы секция читалась. Пусто для безаргументного AddNew<T>().
+			if (!string.IsNullOrEmpty(addNew.path))
+			{
+				code.AppendLine($"factory.Add<global::Framework.Core.Collections.IDescriptionsCreator>(\"{addNew.path}\", typeof(global::Framework.Core.Collections.DescriptionsCreator<global::{interfaceName}>));");
+				code.AppendLine();
+			}
+
 			var seenKeys = new HashSet<string>();
 			foreach (var impl in implementations)
 			{
 				var typePath = !string.IsNullOrEmpty(impl.typePath)
 					? impl.typePath
-					: ToSnakeCase(impl.typeSymbol.Name);
+					: GeneratorShared.ToSnakeCase(impl.typeSymbol.Name);
 
 				// DESCGEN003: два [DescriptionType] претендуют на один ключ в рамках интерфейса —
 				// factory.Add бросит исключение при регистрации на старте. Ловим на компиляции.
@@ -215,29 +234,6 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 
 			context.AddSource($"__{interfaceSimpleName}Extension.g.cs", code.GetSourceText());
 		}
-	}
-
-	private static string ToSnakeCase(string name)
-	{
-		if (string.IsNullOrEmpty(name))
-			return name;
-
-		var builder = new System.Text.StringBuilder();
-		for (int i = 0; i < name.Length; i++)
-		{
-			var c = name[i];
-			if (char.IsUpper(c))
-			{
-				if (i > 0)
-					builder.Append('_');
-				builder.Append(char.ToLowerInvariant(c));
-			}
-			else
-			{
-				builder.Append(c);
-			}
-		}
-		return builder.ToString();
 	}
 
 	private static readonly DiagnosticDescriptor DuplicateKey = new(

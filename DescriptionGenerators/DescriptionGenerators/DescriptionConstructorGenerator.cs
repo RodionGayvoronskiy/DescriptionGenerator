@@ -18,21 +18,14 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	public void Initialize(IncrementalGeneratorInitializationContext context)
 	{
 		var provider = context.SyntaxProvider.ForAttributeWithMetadataName(
-				"Modules.Framework.Core.DescriptionTypeAttribute", SyntaxPredicate, FindDescriptionTypeAttribute)
+				"Modules.Framework.Core.DescriptionTypeAttribute", GeneratorShared.IsPartialNonStaticClass, FindDescriptionTypeAttribute)
 			.Where(static foundForSourceGenerator => foundForSourceGenerator.HasValue)
 			.Select(static (foundForSourceGenerator, _) => foundForSourceGenerator!.Value);
 
 		context.RegisterSourceOutput(source: provider, action: GenerateCode);
 	}
 
-	private bool SyntaxPredicate(SyntaxNode node, CancellationToken cancellationToken)
-	{
-		return node is ClassDeclarationSyntax { AttributeLists.Count: > 0 } candidate
-		       && candidate.Modifiers.Any(SyntaxKind.PartialKeyword)
-		       && !candidate.Modifiers.Any(SyntaxKind.StaticKeyword);
-	}
-
-	private DescriptionData? FindDescriptionTypeAttribute(GeneratorAttributeSyntaxContext context,
+	private static DescriptionData? FindDescriptionTypeAttribute(GeneratorAttributeSyntaxContext context,
 		CancellationToken cancellationToken)
 	{
 		if (context.TargetSymbol is not INamedTypeSymbol symbol) return null;
@@ -63,29 +56,18 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			// Пропускаем члены с атрибутом IgnoreKey, если установлен бит Constructor
 			if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
 			{
-				int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : IgnoreAllBits;
-				if ((targetBits & IgnoreConstructorBit) != 0)
+				int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : GeneratorShared.IgnoreAllBits;
+				if ((targetBits & GeneratorShared.IgnoreConstructorBit) != 0)
 					continue;
 			}
 
-			// Определяем ключ: либо из атрибута Key, либо автоматически из имени
-			string? key;
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttribute, KeyAttribute))
-			{
-				// Если есть атрибут Key, берем значение из него или генерируем из имени
-				key = keyAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
-				if (string.IsNullOrEmpty(key))
-				{
-					key = ToSnakeCase(member.Name);
-				}
-			}
-			else
-			{
-				// Если атрибута Key нет, генерируем ключ автоматически
-				key = ToSnakeCase(member.Name);
-			}
-			
-			object? defValue = member.TryGetAnyAttributeInSelf(out AttributeData? attribute, KeyAttribute) ? attribute?.ConstructorArguments[1].Value : null;
+			// Определяем ключ: либо из атрибута Key (значение из него или авто из имени), либо авто из имени.
+			bool hasKey = member.TryGetAnyAttributeInSelf(out AttributeData? keyAttribute, KeyAttribute);
+			string? key = hasKey ? keyAttribute?.ConstructorArguments.FirstOrDefault().Value as string : null;
+			if (string.IsNullOrEmpty(key))
+				key = GeneratorShared.ToSnakeCase(member.Name);
+
+			object? defValue = hasKey ? keyAttribute?.ConstructorArguments[1].Value : null;
 
 			// Key from [JsonItem] - the data source of truth for serialization (used for DESCGEN001).
 			string? jsonKey = member.TryGetAnyAttributeInSelf(out AttributeData? jsonAttribute, JsonItemAttribute)
@@ -93,12 +75,12 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				: null;
 
 			// [Key(flat: true)] opts a CFloat2/3 collection into the flat [x,y,(z),...] reader.
-			bool isFlat = attribute is { ConstructorArguments.Length: >= 3 } && attribute.ConstructorArguments[2].Value is true;
+			bool isFlat = keyAttribute is { ConstructorArguments.Length: >= 3 } && keyAttribute.ConstructorArguments[2].Value is true;
 
 			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
 		}
 
-		return new DescriptionData(string.Empty, list.ToImmutableArray(), candidate, symbol);
+		return new DescriptionData(list.ToImmutableArray(), candidate, symbol);
 	}
 
 	// Maps generic collections to the matching reader call:
@@ -182,40 +164,11 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		return true;
 	}
 
-	private static string ToSnakeCase(string name)
-	{
-		if (string.IsNullOrEmpty(name))
-			return name;
-
-		if (name.StartsWith("m_"))
-			name = name.Substring(2);
-
-		var builder = new System.Text.StringBuilder();
-		for (int i = 0; i < name.Length; i++)
-		{
-			var c = name[i];
-			if (char.IsUpper(c))
-			{
-				if (i > 0)
-					builder.Append('_');
-				builder.Append(char.ToLowerInvariant(c));
-			}
-			else
-			{
-				builder.Append(c);
-			}
-		}
-
-		return builder.ToString();
-	}
-
 	private struct DescriptionData(
-		string type,
 		ImmutableArray<KeyData> members,
 		ClassDeclarationSyntax declaration,
 		ISymbol symbol)
 	{
-		public readonly string type = type;
 		public readonly ImmutableArray<KeyData> members = members;
 		public readonly ClassDeclarationSyntax declaration = declaration;
 		public readonly ISymbol symbol = symbol;
@@ -248,7 +201,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		return literal;
 	}
 
-	private void GenerateCode(SourceProductionContext context, DescriptionData data)
+	private static void GenerateCode(SourceProductionContext context, DescriptionData data)
 	{
 		var declaration = data.declaration;
 		var @namespace = declaration.GetNamespaceName();
@@ -266,7 +219,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 		foreach (KeyData member in data.members)
 		{
-			var typeName = member.symbol.GetSymbolType()?.ToDisplayString();
+			var memberType = member.symbol.GetSymbolType();
+			var typeName = memberType?.ToDisplayString();
 
 			// DESCGEN001: ключ из [JsonItem] (источник истины данных) расходится с ключом,
 			// по которому генератор читает узел. Иначе член молча останется пустым.
@@ -379,7 +333,6 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key}\");");
 					break;
 				default:
-					var memberType = member.symbol.GetSymbolType();
 					if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Enum })
 					{
 						code.AppendLine(
@@ -454,8 +407,4 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		category: "DescriptionGenerators",
 		defaultSeverity: DiagnosticSeverity.Warning,
 		isEnabledByDefault: true);
-
-	// IgnoreKeyTarget enum bits (mirrors Modules.Framework.Core.IgnoreKeyTarget)
-	private const int IgnoreConstructorBit = 1; // IgnoreKeyTarget.Constructor
-	private const int IgnoreAllBits = 3;        // IgnoreKeyTarget.All (default when no arg)
 }
