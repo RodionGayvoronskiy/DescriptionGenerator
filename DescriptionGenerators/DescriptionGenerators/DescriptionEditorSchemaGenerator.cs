@@ -176,10 +176,16 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 		if (typeName == null) return null;
 
-		// Hint overrides for string: an explicit asset-path target uses a Sprite/Texture kind.
-		if (typeName == "string" && hint != EditorFieldHint.Default)
+		// Hint overrides for string: Sprite/Texture change the editor control to an asset picker.
+		// Reference is resolved at runtime by JsonFormBuilder via reflection — schema emits plain String.
+		if (typeName == "string" && hint is EditorFieldHint.Sprite or EditorFieldHint.Texture or EditorFieldHint.Prefab)
 		{
-			string hintKind = hint == EditorFieldHint.Sprite ? "Sprite" : "Texture";
+			string hintKind = hint switch
+			{
+				EditorFieldHint.Sprite => "Sprite",
+				EditorFieldHint.Prefab => "Prefab",
+				_ => "Texture"
+			};
 			return !string.IsNullOrEmpty(path)
 				? $"{prefix}\"{key}\", {kinds}{hintKind}, \"{path}\"),"
 				: $"{prefix}\"{key}\", {kinds}{hintKind}),";
@@ -339,7 +345,9 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 	{
 		Default = 0,
 		Sprite = 1,
-		Texture = 2
+		Texture = 2,
+		Reference = 3,  // runtime-only hint; schema emits plain String/StringList
+		Prefab = 4
 	}
 
 	private readonly struct DescriptionData(ImmutableArray<FieldData> fields, ClassDeclarationSyntax declaration)

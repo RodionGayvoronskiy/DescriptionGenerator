@@ -179,6 +179,11 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			if (!typesByInterface.TryGetValue(interfaceName, out var implementations))
 				continue;
 
+			// Полностью квалифицированное имя (с global::). Extension-класс кладётся в неймспейс
+			// интерфейса; если он вида Modules.Framework.* — неквалифицированные "Framework.Core.*"
+			// в теле резолвятся относительно (→ Modules.Framework.Core.*) и не компилируются. global:: лечит.
+			var globalInterfaceName = addNew.interfaceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
 			var code = new CodeWriter();
 			
 			// Generate the extension class
@@ -190,7 +195,7 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			code.AppendLine($"public static class __{interfaceSimpleName}Extension");
 			code.BeginBlock();
 			
-			code.AppendLine($"public static void RegisterAll(this Framework.Core.Factories.Registration<{interfaceName}> registration)");
+			code.AppendLine($"public static void RegisterAll(this global::Framework.Core.Factories.Registration<{globalInterfaceName}> registration)");
 			code.BeginBlock();
 			
 			code.AppendLine("var factory = registration.factory;");
@@ -200,7 +205,7 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			// DescriptionsCreator, чтобы секция читалась. Пусто для безаргументного AddNew<T>().
 			if (!string.IsNullOrEmpty(addNew.path))
 			{
-				code.AppendLine($"factory.Add<global::Framework.Core.Collections.IDescriptionsCreator>(\"{addNew.path}\", typeof(global::Framework.Core.Collections.DescriptionsCreator<global::{interfaceName}>));");
+				code.AppendLine($"factory.Add<global::Framework.Core.Collections.IDescriptionsCreator>(\"{addNew.path}\", typeof(global::Framework.Core.Collections.DescriptionsCreator<{globalInterfaceName}>));");
 				code.AppendLine();
 			}
 
@@ -221,11 +226,12 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 					continue;
 				}
 
-				code.AppendLine($"factory.Add<{interfaceName}>(\"{typePath}\", typeof({impl.typeSymbol.ToDisplayString()}));");
+				var globalImplName = impl.typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+				code.AppendLine($"factory.Add<{globalInterfaceName}>(\"{typePath}\", typeof({globalImplName}));");
 
 				// isDefault → дефолтная регистрация для этого интерфейса (factory.SetDefault идемпотентен).
 				if (impl.isDefault)
-					code.AppendLine($"factory.SetDefault<{interfaceName}>(typeof({impl.typeSymbol.ToDisplayString()}));");
+					code.AppendLine($"factory.SetDefault<{globalInterfaceName}>(typeof({globalImplName}));");
 			}
 
 			code.EndBlock(); // RegisterAll

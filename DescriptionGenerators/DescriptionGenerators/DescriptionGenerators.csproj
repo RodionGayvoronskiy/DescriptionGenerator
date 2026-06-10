@@ -14,7 +14,8 @@
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-      <OutputPath>D:\UnityProjects\street\street_m_1\Assets\Plugins</OutputPath>
+      <OutputPath>D:\UnityProjects\street\street_m_1\Assets\Plugins\DescriptionGenerator</OutputPath>
+      <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     </PropertyGroup>
 
     <ItemGroup>
