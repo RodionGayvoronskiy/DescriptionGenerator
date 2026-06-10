@@ -75,7 +75,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 					continue;
 
 				// Пропускаем члены с атрибутом IgnoreKey, если установлен бит EditorSchema
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, new[] { IgnoreKeyAttribute.FullName }))
 				{
 					int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : GeneratorShared.IgnoreAllBits;
 					if ((targetBits & GeneratorShared.IgnoreEditorSchemaBit) != 0)
@@ -84,7 +84,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 				// [Key(flat: true)] fields use a packed [x,y,(z),...] layout the editor cannot render;
 				// a Float2/3List entry would corrupt them on re-save, so hide them.
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? flatKey, KeyAttribute)
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? flatKey, new[] { KeyAttribute.FullName })
 				    && flatKey is { ConstructorArguments.Length: >= 3 } && flatKey.ConstructorArguments[2].Value is true)
 					continue;
 
@@ -96,7 +96,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				// fields and are filtered out below.
 				bool hasExplicitKey = false;
 				string key;
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, KeyAttribute)
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? keyAttr, new[] { KeyAttribute.FullName })
 				    && keyAttr?.ConstructorArguments.FirstOrDefault().Value is string explicitKey
 				    && !string.IsNullOrEmpty(explicitKey))
 				{
@@ -118,7 +118,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				// ── [EditorField] hint ──
 				var editorHint = EditorFieldHint.Default;
 				string editorPath = "";
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, EditorFieldAttribute))
+				if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, new[] { EditorFieldAttribute.FullName }))
 				{
 					int raw = editorAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : 0;
 					editorHint = (EditorFieldHint)raw;

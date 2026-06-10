@@ -54,7 +54,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				continue;
 
 			// Пропускаем члены с атрибутом IgnoreKey, если установлен бит Constructor
-			if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, IgnoreKeyAttribute))
+			if (member.TryGetAnyAttributeInSelf(out AttributeData? ignoreAttr, new[] { IgnoreKeyAttribute.FullName }))
 			{
 				int targetBits = ignoreAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : GeneratorShared.IgnoreAllBits;
 				if ((targetBits & GeneratorShared.IgnoreConstructorBit) != 0)
@@ -62,7 +62,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			}
 
 			// Определяем ключ: либо из атрибута Key (значение из него или авто из имени), либо авто из имени.
-			bool hasKey = member.TryGetAnyAttributeInSelf(out AttributeData? keyAttribute, KeyAttribute);
+			bool hasKey = member.TryGetAnyAttributeInSelf(out AttributeData? keyAttribute, new[] { KeyAttribute.FullName });
 			string? key = hasKey ? keyAttribute?.ConstructorArguments.FirstOrDefault().Value as string : null;
 			if (string.IsNullOrEmpty(key))
 				key = GeneratorShared.ToSnakeCase(member.Name);
@@ -70,7 +70,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			object? defValue = hasKey ? keyAttribute?.ConstructorArguments[1].Value : null;
 
 			// Key from [JsonItem] - the data source of truth for serialization (used for DESCGEN001).
-			string? jsonKey = member.TryGetAnyAttributeInSelf(out AttributeData? jsonAttribute, JsonItemAttribute)
+			string? jsonKey = member.TryGetAnyAttributeInSelf(out AttributeData? jsonAttribute, new[] { JsonItemAttribute.FullName })
 				? jsonAttribute?.ConstructorArguments.FirstOrDefault().Value as string
 				: null;
 
