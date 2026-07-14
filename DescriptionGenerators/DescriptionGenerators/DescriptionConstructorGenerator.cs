@@ -67,7 +67,20 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			if (string.IsNullOrEmpty(key))
 				key = GeneratorShared.ToSnakeCase(member.Name);
 
-			object? defValue = hasKey ? keyAttribute?.ConstructorArguments[1].Value : null;
+			// defaultValue — это named-property, а не ctor-параметр: в NamedArguments он присутствует
+			// ТОЛЬКО когда задан явно. Поэтому сам факт наличия = opt-in на OrDefault-чтение (в т.ч. при значении null).
+			bool hasDefaultValue = false;
+			object? defValue = null;
+			if (keyAttribute is not null)
+			{
+				foreach (var named in keyAttribute.NamedArguments)
+				{
+					if (named.Key != "defaultValue") continue;
+					hasDefaultValue = true;
+					defValue = named.Value.Value;
+					break;
+				}
+			}
 
 			// Key from [JsonItem] - the data source of truth for serialization (used for DESCGEN001).
 			string? jsonKey = member.TryGetAnyAttributeInSelf(out AttributeData? jsonAttribute, new[] { JsonItemAttribute.FullName })
@@ -75,9 +88,10 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 				: null;
 
 			// [Key(flat: true)] opts a CFloat2/3 collection into the flat [x,y,(z),...] reader.
-			bool isFlat = keyAttribute is { ConstructorArguments.Length: >= 3 } && keyAttribute.ConstructorArguments[2].Value is true;
+			// flat — ctor-параметр №1 (сразу после key).
+			bool isFlat = keyAttribute is { ConstructorArguments.Length: >= 2 } && keyAttribute.ConstructorArguments[1].Value is true;
 
-			list.Add(new KeyData(key!, member, defValue is not null, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
+			list.Add(new KeyData(key!, member, hasDefaultValue, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
 		}
 
 		return new DescriptionData(list.ToImmutableArray(), candidate, symbol);
@@ -362,8 +376,11 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 						}
 						else if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Interface or TypeKind.Class })
 					{
+						// [Key(defaultValue = ...)] задан (пусть даже null) → поле опционально: отсутствие ключа → null.
+						// Не задан → фабричный дефолт (isDefault-инстанс), как для обязательных вложенных полей.
+						string instantiate = member.hasDefaultValue ? "InstantiateOrDefault" : "Instantiate";
 						code.AppendLine(
-							$"{member.symbol.Name} = context.Instantiate<global::{typeName}>(\"{member.key}\", reader);");
+							$"{member.symbol.Name} = context.{instantiate}<global::{typeName}>(\"{member.key}\", reader);");
 					}
 					else
 					{
