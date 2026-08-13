@@ -156,7 +156,8 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 		SourceProductionContext context,
 		(ImmutableArray<AddNewData> AddNewCalls, ImmutableArray<DescriptionTypeData> DescriptionTypes) data)
 	{
-		// Group description types by their implemented interfaces
+		// Group description types by what AddNew<T> can name: implemented interfaces and,
+		// for collections whose element is a concrete description, the type itself and its bases.
 		var typesByInterface = new Dictionary<string, List<DescriptionTypeData>>();
 
 		foreach (var descType in data.DescriptionTypes)
@@ -168,6 +169,14 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 					typesByInterface[ifaceName] = new List<DescriptionTypeData>();
 				typesByInterface[ifaceName].Add(descType);
 			}
+
+			for (INamedTypeSymbol? baseType = descType.typeSymbol; baseType is not null; baseType = baseType.BaseType)
+			{
+				var baseName = baseType.ToDisplayString();
+				if (!typesByInterface.ContainsKey(baseName))
+					typesByInterface[baseName] = new List<DescriptionTypeData>();
+				typesByInterface[baseName].Add(descType);
+			}
 		}
 
 		// Generate extension for each AddNew<T> call
@@ -176,8 +185,15 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 			var interfaceName = addNew.interfaceType.ToDisplayString();
 			var interfaceSimpleName = addNew.interfaceType.Name;
 
+			// Коллекции нужен свой DescriptionsCreator, даже когда регистрировать нечего:
+			// без него секция реестра просто не читается.
 			if (!typesByInterface.TryGetValue(interfaceName, out var implementations))
-				continue;
+			{
+				if (string.IsNullOrEmpty(addNew.path))
+					continue;
+
+				implementations = new List<DescriptionTypeData>();
+			}
 
 			// Полностью квалифицированное имя (с global::). Extension-класс кладётся в неймспейс
 			// интерфейса; если он вида Modules.Framework.* — неквалифицированные "Framework.Core.*"
@@ -232,6 +248,15 @@ public class FactoryRegistrationGenerator : IIncrementalGenerator
 				// isDefault → дефолтная регистрация для этого интерфейса (factory.SetDefault идемпотентен).
 				if (impl.isDefault)
 					code.AppendLine($"factory.SetDefault<{globalInterfaceName}>(typeof({globalImplName}));");
+			}
+
+			// Коллекция конкретного класса: записи без ключа "type" читаются дефолтной регистрацией,
+			// и для такого T дефолт — он сам. Интерфейсам дефолт задаётся через [DescriptionType(isDefault)].
+			if (addNew.interfaceType is { TypeKind: TypeKind.Class, IsAbstract: false }
+			    && !implementations.Any(impl => impl.isDefault))
+			{
+				code.AppendLine();
+				code.AppendLine($"factory.SetDefault<{globalInterfaceName}>(typeof({globalInterfaceName}));");
 			}
 
 			code.EndBlock(); // RegisterAll
