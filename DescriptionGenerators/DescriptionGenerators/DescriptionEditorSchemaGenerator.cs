@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -17,7 +19,6 @@ namespace DescriptionGenerators;
 [Generator(LanguageNames.CSharp)]
 public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 {
-	private static readonly AttributeText EditorFieldAttribute = new("EditorFieldAttribute", "Framework.Core");
 	private static readonly AttributeText KeyAttribute = new("KeyAttribute", "Modules.Framework.Core");
 	private static readonly AttributeText IgnoreKeyAttribute = new("IgnoreKeyAttribute", "Modules.Framework.Core");
 
@@ -115,17 +116,24 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				// Derived class already declared this key — skip base version
 				if (!seenKeys.Add(key)) continue;
 
-				// ── [EditorField] hint ──
-				var editorHint = EditorFieldHint.Default;
-				string editorPath = "";
-				if (member.TryGetAnyAttributeInSelf(out AttributeData? editorAttr, new[] { EditorFieldAttribute.FullName }))
+				// [Key(defaultValue = ...)] — named-property: присутствует в NamedArguments только
+				// когда задан явно, поэтому сам факт наличия и есть признак объявленного дефолта.
+				bool hasDefaultValue = false;
+				object? defaultValue = null;
+				if (keyAttr is not null)
 				{
-					int raw = editorAttr?.ConstructorArguments.FirstOrDefault().Value is int v ? v : 0;
-					editorHint = (EditorFieldHint)raw;
-					editorPath = editorAttr?.ConstructorArguments.ElementAtOrDefault(1).Value as string ?? "";
+					foreach (var named in keyAttr.NamedArguments)
+					{
+						if (named.Key != "defaultValue") continue;
+						hasDefaultValue = true;
+						defaultValue = named.Value.Value;
+						break;
+					}
 				}
 
-				levelFields.Add(new FieldData(key, member, editorHint, editorPath));
+				// Хинты-поля (Sprite/Reference/Curve/…) определяет редактор рефлексией по подклассам
+				// EditorFieldAttribute; схема несёт только тип-зависимый kind.
+				levelFields.Add(new FieldData(key, member, hasDefaultValue, defaultValue));
 			}
 
 			// Insert this level's fields before any fields already collected from more-derived types
@@ -155,9 +163,13 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			var memberType = field.member.GetSymbolType();
 			var typeName = memberType?.ToDisplayString();
 
-			string? entry = BuildEntry(field.key, typeName, memberType, field.editorHint, field.editorPath);
-			if (entry != null)
-				code.AppendLine(entry);
+			string? entry = BuildEntry(field.key, typeName, memberType);
+			if (entry == null) continue;
+
+			if (field.hasDefaultValue)
+				entry = WithDefault(entry, FormatDefaultLiteral(typeName, memberType, field.defaultValue));
+
+			code.AppendLine(entry);
 		}
 
 		code.EndBlock();
@@ -169,27 +181,65 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 	// ── Entry builders ───────────────────────────────────────────────────────────
 
-	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType, EditorFieldHint hint, string path)
+	// Дефолт несут только скаляры и enum: у остальных видов [Key(defaultValue = ...)] не бывает
+	// (значение обязано быть compile-time-константой), а редактор рисует их своими контролами.
+	private static readonly string[] s_defaultableKinds =
+	{
+		"EditorFieldKind.String)",
+		"EditorFieldKind.Int)",
+		"EditorFieldKind.Float)",
+		"EditorFieldKind.Bool)",
+		"EditorFieldKind.Enum,"
+	};
+
+	private static string WithDefault(string entry, string? literal)
+	{
+		if (literal == null) return entry;
+
+		const string ctor = "new global::Framework.Core.DescriptionEditorField(";
+		const string factory = "global::Framework.Core.DescriptionEditorField.WithDefault(";
+
+		if (!entry.StartsWith(ctor, StringComparison.Ordinal)) return entry;
+		if (!s_defaultableKinds.Any(kind => entry.Contains(kind))) return entry;
+
+		string body = entry.TrimEnd();
+
+		if (body.EndsWith(",", StringComparison.Ordinal))
+			body = body.Substring(0, body.Length - 1);
+
+		if (!body.EndsWith(")", StringComparison.Ordinal)) return entry;
+
+		string arguments = body.Substring(ctor.Length, body.Length - ctor.Length - 1);
+
+		return $"{factory}{arguments}, {literal}),";
+	}
+
+	private static string? FormatDefaultLiteral(string? typeName, ITypeSymbol? memberType, object? value)
+	{
+		if (value == null) return "null";
+
+		if (memberType is INamedTypeSymbol { TypeKind: TypeKind.Enum })
+			return $"(global::{memberType.ToDisplayString()})({Convert.ToInt64(value, CultureInfo.InvariantCulture)})";
+
+		return value switch
+		{
+			bool boolValue => boolValue ? "true" : "false",
+			string stringValue => $"\"{stringValue.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"",
+			float floatValue => $"{floatValue.ToString(CultureInfo.InvariantCulture)}f",
+			double doubleValue => $"{doubleValue.ToString(CultureInfo.InvariantCulture)}d",
+			long longValue => $"{longValue.ToString(CultureInfo.InvariantCulture)}L",
+			ulong ulongValue => $"{ulongValue.ToString(CultureInfo.InvariantCulture)}UL",
+			uint uintValue => $"{uintValue.ToString(CultureInfo.InvariantCulture)}U",
+			_ => Convert.ToString(value, CultureInfo.InvariantCulture)
+		};
+	}
+
+	private static string? BuildEntry(string key, string? typeName, ITypeSymbol? memberType)
 	{
 		const string prefix = "new global::Framework.Core.DescriptionEditorField(";
 		const string kinds = "global::Framework.Core.EditorFieldKind.";
 
 		if (typeName == null) return null;
-
-		// Hint overrides for string: Sprite/Texture change the editor control to an asset picker.
-		// Reference is resolved at runtime by JsonFormBuilder via reflection — schema emits plain String.
-		if (typeName == "string" && hint is EditorFieldHint.Sprite or EditorFieldHint.Texture or EditorFieldHint.Prefab)
-		{
-			string hintKind = hint switch
-			{
-				EditorFieldHint.Sprite => "Sprite",
-				EditorFieldHint.Prefab => "Prefab",
-				_ => "Texture"
-			};
-			return !string.IsNullOrEmpty(path)
-				? $"{prefix}\"{key}\", {kinds}{hintKind}, \"{path}\"),"
-				: $"{prefix}\"{key}\", {kinds}{hintKind}),";
-		}
 
 		switch (typeName)
 		{
@@ -341,26 +391,17 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 	// ── Data types ───────────────────────────────────────────────────────────────
 
-	private enum EditorFieldHint
-	{
-		Default = 0,
-		Sprite = 1,
-		Texture = 2,
-		Reference = 3,  // runtime-only hint; schema emits plain String/StringList
-		Prefab = 4
-	}
-
 	private readonly struct DescriptionData(ImmutableArray<FieldData> fields, ClassDeclarationSyntax declaration)
 	{
 		public readonly ImmutableArray<FieldData> fields = fields;
 		public readonly ClassDeclarationSyntax declaration = declaration;
 	}
 
-	private readonly struct FieldData(string key, ISymbol member, EditorFieldHint editorHint, string editorPath)
+	private readonly struct FieldData(string key, ISymbol member, bool hasDefaultValue, object? defaultValue)
 	{
 		public readonly string key = key;
 		public readonly ISymbol member = member;
-		public readonly EditorFieldHint editorHint = editorHint;
-		public readonly string editorPath = editorPath;
+		public readonly bool hasDefaultValue = hasDefaultValue;
+		public readonly object? defaultValue = defaultValue;
 	}
 }
