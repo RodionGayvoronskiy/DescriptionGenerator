@@ -91,7 +91,29 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			// flat — ctor-параметр №1 (сразу после key).
 			bool isFlat = keyAttribute is { ConstructorArguments.Length: >= 2 } && keyAttribute.ConstructorArguments[1].Value is true;
 
-			list.Add(new KeyData(key!, member, hasDefaultValue, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat, HasInitializer(member)));
+			// Инициализатор поля выполняется до тела конструктора, поэтому его значение можно
+			// передать как defaultValue самому чтению — там, где ридер принимает такой параметр.
+			// Остальным типам достаётся условное чтение (см. useConditionalRead).
+			string? memberTypeName = member.GetSymbolType()?.ToDisplayString();
+			bool hasInitializer = HasInitializer(member);
+
+			string defaultArgument = hasDefaultValue
+				? FormatDefaultArg(memberTypeName, defValue)
+				: hasInitializer
+					? member.Name
+					: "default";
+
+			list.Add(new KeyData(
+				key!,
+				member,
+				hasDefaultValue,
+				FormatDefaultArg(memberTypeName, defValue),
+				jsonKey,
+				isFlat,
+				hasInitializer,
+				defaultArgument,
+				hasDefaultValue || (hasInitializer && AcceptsDefaultArgument(memberTypeName)),
+				hasInitializer && !AcceptsDefaultArgument(memberTypeName)));
 		}
 
 		return new DescriptionData(list.ToImmutableArray(), candidate, symbol);
@@ -188,7 +210,17 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly ISymbol symbol = symbol;
 	}
 
-	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey, bool isFlat, bool hasInitializer)
+	private struct KeyData(
+		string key,
+		ISymbol symbol,
+		bool hasDefaultValue,
+		string defaultValue,
+		string? jsonKey,
+		bool isFlat,
+		bool hasInitializer,
+		string defaultArgument,
+		bool hasDefault,
+		bool useConditionalRead)
 	{
 		public readonly string key = key;
 		public readonly ISymbol symbol = symbol;
@@ -200,6 +232,48 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 		/// <summary>Член объявлен с инициализатором — его значение и есть дефолт.</summary>
 		public readonly bool hasInitializer = hasInitializer;
+
+		/// <summary>Что передать в defaultValue чтения: литерал из атрибута либо сам член.</summary>
+		public readonly string defaultArgument = defaultArgument;
+
+		/// <summary>Дефолт объявлен и его можно передать чтению.</summary>
+		public readonly bool hasDefault = hasDefault;
+
+		/// <summary>Ридер не принимает дефолт — читаем только при наличии ключа.</summary>
+		public readonly bool useConditionalRead = useConditionalRead;
+	}
+
+	// Чтения, которые принимают defaultValue: скаляры, их Obscured-обёртки, enum,
+	// массивы примитивов и строковая мапа. Остальным дефолт передать некуда.
+	private static bool AcceptsDefaultArgument(string? typeName)
+	{
+		switch (typeName)
+		{
+			case "string":
+			case "int":
+			case "bool":
+			case "byte":
+			case "double":
+			case "long":
+			case "ulong":
+			case "ushort":
+			case "uint":
+			case "float":
+			case "string[]":
+			case "int[]":
+			case "float[]":
+			case "byte[]":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredString":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredBool":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredDouble":
+			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredLong":
+				return true;
+
+			default:
+				return false;
+		}
 	}
 
 	// Инициализатор поля выполняется до тела конструктора, поэтому его значение можно
@@ -267,10 +341,9 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			// DESCGEN002: член не получил ни одного чтения и останется null/default.
 			var emitted = true;
 
-			// Член с инициализатором читается условно: нет ключа — остаётся объявленное значение.
-			// Так дефолт работает и для массивов, коллекций и вложенных объектов, которым
-			// compile-time-константу в атрибуте задать нельзя.
-			if (member.hasInitializer)
+			// Коллекциям и вложенным объектам дефолт передать некуда: читаем только при наличии
+			// ключа, чтобы объявленное значение пережило его отсутствие.
+			if (member.useConditionalRead)
 			{
 				code.AppendLine($"if (reader.Contains(\"{member.key}\"))");
 				code.BeginBlock();
@@ -280,56 +353,56 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			{
 				case "string":
 				{
-					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : "default";
+					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : member.defaultArgument;
 					code.AppendLine(
 						$"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\", defaultValue: {defaultValue});");
 				}
 					break;
 				case "int":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "bool":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "byte":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadByteOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadByteOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "double":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "long":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "ulong":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadULongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadULongOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "ushort":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadUshortOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadUshortOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "uint":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadUIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadUIntOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "float":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "string[]":
-					code.AppendLine(member.hasDefaultValue
-						? $"{member.symbol.Name} = reader.ReadStringArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+					code.AppendLine(member.hasDefault
+						? $"{member.symbol.Name} = reader.ReadStringArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
 						: $"{member.symbol.Name} = reader.ReadStringArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "float[]":
-					code.AppendLine(member.hasDefaultValue
-						? $"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+					code.AppendLine(member.hasDefault
+						? $"{member.symbol.Name} = reader.ReadFloatArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
 						: $"{member.symbol.Name} = reader.ReadFloatArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "int[]":
-					code.AppendLine(member.hasDefaultValue
-						? $"{member.symbol.Name} = reader.ReadIntArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+					code.AppendLine(member.hasDefault
+						? $"{member.symbol.Name} = reader.ReadIntArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
 						: $"{member.symbol.Name} = reader.ReadIntArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "byte[]":
-					code.AppendLine(member.hasDefaultValue
-						? $"{member.symbol.Name} = reader.ReadByteArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});"
+					code.AppendLine(member.hasDefault
+						? $"{member.symbol.Name} = reader.ReadByteArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
 						: $"{member.symbol.Name} = reader.ReadByteArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CBounds":
@@ -352,25 +425,25 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredString":
 				{
-					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : "default";
+					var defaultValue = member.hasDefaultValue ? $"\"{member.defaultValue}\"" : member.defaultArgument;
 					code.AppendLine(
 						$"{member.symbol.Name} = reader.ReadStringOrDefault(\"{member.key}\", defaultValue: {defaultValue});");
 				}
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredBool":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadBoolOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadIntOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredFloat":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadFloatOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredDouble":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadDoubleOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "CodeStage.AntiCheat.ObscuredTypes.ObscuredLong":
-					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultValue});");
+					code.AppendLine($"{member.symbol.Name} = reader.ReadLongOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
 					break;
 				case "Framework.Core.Data.IJsonDataReader":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadNodeOrEmpty(\"{member.key}\");");
@@ -419,7 +492,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					break;
 			}
 
-			if (member.hasInitializer)
+			if (member.useConditionalRead)
 			{
 				code.EndBlock();
 			}
