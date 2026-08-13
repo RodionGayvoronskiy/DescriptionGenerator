@@ -91,7 +91,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			// flat — ctor-параметр №1 (сразу после key).
 			bool isFlat = keyAttribute is { ConstructorArguments.Length: >= 2 } && keyAttribute.ConstructorArguments[1].Value is true;
 
-			list.Add(new KeyData(key!, member, hasDefaultValue, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat));
+			list.Add(new KeyData(key!, member, hasDefaultValue, FormatDefaultArg(member.GetSymbolType()?.ToDisplayString(), defValue), jsonKey, isFlat, HasInitializer(member)));
 		}
 
 		return new DescriptionData(list.ToImmutableArray(), candidate, symbol);
@@ -188,15 +188,35 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 		public readonly ISymbol symbol = symbol;
 	}
 
-	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey, bool isFlat)
+	private struct KeyData(string key, ISymbol symbol, bool hasDefaultValue, string defaultValue, string? jsonKey, bool isFlat, bool hasInitializer)
 	{
 		public readonly string key = key;
 		public readonly ISymbol symbol = symbol;
-	
+
 		public readonly bool hasDefaultValue = hasDefaultValue;
 		public readonly string defaultValue = defaultValue;
 		public readonly string? jsonKey = jsonKey;
 		public readonly bool isFlat = isFlat;
+
+		/// <summary>Член объявлен с инициализатором — его значение и есть дефолт.</summary>
+		public readonly bool hasInitializer = hasInitializer;
+	}
+
+	// Инициализатор поля выполняется до тела конструктора, поэтому его значение можно
+	// сохранить, читая узел только когда ключ реально есть в данных.
+	private static bool HasInitializer(ISymbol member)
+	{
+		foreach (var reference in member.DeclaringSyntaxReferences)
+		{
+			switch (reference.GetSyntax())
+			{
+				case VariableDeclaratorSyntax { Initializer: not null }:
+				case PropertyDeclarationSyntax { Initializer: not null }:
+					return true;
+			}
+		}
+
+		return false;
 	}
 	
 	private static string FormatDefaultArg(string? typeName, object? defaultValue)
@@ -246,6 +266,15 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 			// DESCGEN002: член не получил ни одного чтения и останется null/default.
 			var emitted = true;
+
+			// Член с инициализатором читается условно: нет ключа — остаётся объявленное значение.
+			// Так дефолт работает и для массивов, коллекций и вложенных объектов, которым
+			// compile-time-константу в атрибуте задать нельзя.
+			if (member.hasInitializer)
+			{
+				code.AppendLine($"if (reader.Contains(\"{member.key}\"))");
+				code.BeginBlock();
+			}
 
 			switch (typeName)
 			{
@@ -388,6 +417,11 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					}
 
 					break;
+			}
+
+			if (member.hasInitializer)
+			{
+				code.EndBlock();
 			}
 
 			if (!emitted)

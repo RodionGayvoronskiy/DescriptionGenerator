@@ -131,9 +131,20 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 					}
 				}
 
+				// Инициализатор поля — тоже дефолт, но значение может быть невычислимым
+				// (массив, коллекция, вложенный объект). В схему кладём его исходный текст,
+				// чтобы редактор показал, что вернёт чтение при отсутствующем ключе.
+				ExpressionSyntax? initializer = GetInitializer(member);
+
 				// Хинты-поля (Sprite/Reference/Curve/…) определяет редактор рефлексией по подклассам
 				// EditorFieldAttribute; схема несёт только тип-зависимый kind.
-				levelFields.Add(new FieldData(key, member, hasDefaultValue, defaultValue));
+				levelFields.Add(new FieldData(
+					key,
+					member,
+					hasDefaultValue,
+					defaultValue,
+					initializer?.ToString(),
+					GetLiteralInitializer(initializer)));
 			}
 
 			// Insert this level's fields before any fields already collected from more-derived types
@@ -166,8 +177,15 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			string? entry = BuildEntry(field.key, typeName, memberType);
 			if (entry == null) continue;
 
-			if (field.hasDefaultValue)
-				entry = WithDefault(entry, FormatDefaultLiteral(typeName, memberType, field.defaultValue));
+			// Атрибут задаёт дефолт явно; иначе им становится литеральный инициализатор члена.
+			string? literal = field.hasDefaultValue
+				? FormatDefaultLiteral(typeName, memberType, field.defaultValue)
+				: field.initializerLiteral;
+
+			entry = WithDefault(entry, literal);
+
+			if (field.initializer != null)
+				entry = WithNamedArgument(entry, "defaultSource", $"\"{EscapeText(field.initializer)}\"");
 
 			code.AppendLine(entry);
 		}
@@ -199,6 +217,11 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		if (literal == null || literal == "null") return entry;
 		if (!s_defaultableKinds.Any(kind => entry.Contains(kind))) return entry;
 
+		return WithNamedArgument(entry, "defaultValue", literal);
+	}
+
+	private static string WithNamedArgument(string entry, string name, string literal)
+	{
 		string body = entry.TrimEnd();
 
 		if (body.EndsWith(",", StringComparison.Ordinal))
@@ -206,7 +229,16 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 		if (!body.EndsWith(")", StringComparison.Ordinal)) return entry;
 
-		return $"{body.Substring(0, body.Length - 1)}, defaultValue: {literal}),";
+		return $"{body.Substring(0, body.Length - 1)}, {name}: {literal}),";
+	}
+
+	private static string EscapeText(string text)
+	{
+		return text
+			.Replace("\\", "\\\\")
+			.Replace("\"", "\\\"")
+			.Replace("\r", " ")
+			.Replace("\n", " ");
 	}
 
 	private static string? FormatDefaultLiteral(string? typeName, ITypeSymbol? memberType, object? value)
@@ -392,11 +424,52 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		public readonly ClassDeclarationSyntax declaration = declaration;
 	}
 
-	private readonly struct FieldData(string key, ISymbol member, bool hasDefaultValue, object? defaultValue)
+	private readonly struct FieldData(
+		string key,
+		ISymbol member,
+		bool hasDefaultValue,
+		object? defaultValue,
+		string? initializer,
+		string? initializerLiteral)
 	{
 		public readonly string key = key;
 		public readonly ISymbol member = member;
 		public readonly bool hasDefaultValue = hasDefaultValue;
 		public readonly object? defaultValue = defaultValue;
+
+		/// <summary>Исходный текст инициализатора члена, если он объявлен.</summary>
+		public readonly string? initializer = initializer;
+
+		/// <summary>Тот же инициализатор, когда он литеральный и годится как значение дефолта.</summary>
+		public readonly string? initializerLiteral = initializerLiteral;
+	}
+
+	private static ExpressionSyntax? GetInitializer(ISymbol member)
+	{
+		foreach (var reference in member.DeclaringSyntaxReferences)
+		{
+			switch (reference.GetSyntax())
+			{
+				case VariableDeclaratorSyntax { Initializer: not null } variable:
+					return variable.Initializer!.Value;
+
+				case PropertyDeclarationSyntax { Initializer: not null } property:
+					return property.Initializer!.Value;
+			}
+		}
+
+		return null;
+	}
+
+	// Литеральный инициализатор (число, строка, bool, в том числе со знаком) — валидный C#-литерал,
+	// его можно положить прямо в defaultValue, и редактор покажет значение, а не только подсказку.
+	private static string? GetLiteralInitializer(ExpressionSyntax? initializer)
+	{
+		return initializer switch
+		{
+			LiteralExpressionSyntax literal => literal.ToString(),
+			PrefixUnaryExpressionSyntax { Operand: LiteralExpressionSyntax } unary => unary.ToString(),
+			_ => null
+		};
 	}
 }
