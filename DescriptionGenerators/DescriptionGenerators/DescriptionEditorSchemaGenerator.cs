@@ -192,14 +192,11 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		"EditorFieldKind.Enum,"
 	};
 
+	// Дефолт дописывается именованным аргументом: позиционно строковое значение ушло бы
+	// в перегрузку с path, а именованный аргумент разрешает перегрузку однозначно.
 	private static string WithDefault(string entry, string? literal)
 	{
-		if (literal == null) return entry;
-
-		const string ctor = "new global::Framework.Core.DescriptionEditorField(";
-		const string factory = "global::Framework.Core.DescriptionEditorField.WithDefault(";
-
-		if (!entry.StartsWith(ctor, StringComparison.Ordinal)) return entry;
+		if (literal == null || literal == "null") return entry;
 		if (!s_defaultableKinds.Any(kind => entry.Contains(kind))) return entry;
 
 		string body = entry.TrimEnd();
@@ -209,9 +206,7 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 		if (!body.EndsWith(")", StringComparison.Ordinal)) return entry;
 
-		string arguments = body.Substring(ctor.Length, body.Length - ctor.Length - 1);
-
-		return $"{factory}{arguments}, {literal}),";
+		return $"{body.Substring(0, body.Length - 1)}, defaultValue: {literal}),";
 	}
 
 	private static string? FormatDefaultLiteral(string? typeName, ITypeSymbol? memberType, object? value)
