@@ -121,6 +121,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 
 	// Maps generic collections to the matching reader call:
 	//  - element string/int/float/byte → Read<E>ArrayOrEmpty
+	//  - element TimeSpan              → ReadTimeSpanArrayOrEmpty
 	//  - element CFloat2/CFloat3       → ReadFloat2/Float3ArrayOrEmpty
 	//  - element interface/class       → context.InstantiateArray<E>
 	// Collection kinds: concrete List/HashSet are wrapped; IList/IReadOnlyList/ICollection/
@@ -178,6 +179,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			case "int": source = $"reader.ReadIntArrayOrEmpty(\"{key}\")"; break;
 			case "float": source = $"reader.ReadFloatArrayOrEmpty(\"{key}\")"; break;
 			case "byte": source = $"reader.ReadByteArrayOrEmpty(\"{key}\")"; break;
+			case "System.TimeSpan": source = $"reader.ReadTimeSpanArrayOrEmpty(\"{key}\")"; break;
 			case "Framework.Core.Maths.CFloat2": source = $"reader.{(isFlat ? "ReadFlatFloat2ArrayOrEmpty" : "ReadFloat2ArrayOrEmpty")}(\"{key}\")"; break;
 			case "Framework.Core.Maths.CFloat3": source = $"reader.{(isFlat ? "ReadFlatFloat3ArrayOrEmpty" : "ReadFloat3ArrayOrEmpty")}(\"{key}\")"; break;
 			default:
@@ -244,7 +246,7 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 	}
 
 	// Чтения, которые принимают defaultValue: скаляры, их Obscured-обёртки, enum,
-	// массивы примитивов и строковая мапа. Остальным дефолт передать некуда.
+	// TimeSpan, массивы примитивов и строковая мапа. Остальным дефолт передать некуда.
 	private static bool AcceptsDefaultArgument(string? typeName)
 	{
 		switch (typeName)
@@ -263,6 +265,8 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 			case "int[]":
 			case "float[]":
 			case "byte[]":
+			case "System.TimeSpan":
+			case "System.TimeSpan[]":
 			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredString":
 			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredBool":
 			case "CodeStage.AntiCheat.ObscuredTypes.ObscuredInt":
@@ -404,6 +408,14 @@ public class DescriptionConstructorGenerator : IIncrementalGenerator
 					code.AppendLine(member.hasDefault
 						? $"{member.symbol.Name} = reader.ReadByteArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
 						: $"{member.symbol.Name} = reader.ReadByteArrayOrEmpty(\"{member.key}\");");
+					break;
+				case "System.TimeSpan":
+					code.AppendLine($"{member.symbol.Name} = reader.ReadTimeSpanOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});");
+					break;
+				case "System.TimeSpan[]":
+					code.AppendLine(member.hasDefault
+						? $"{member.symbol.Name} = reader.ReadTimeSpanArrayOrDefault(\"{member.key}\", defaultValue: {member.defaultArgument});"
+						: $"{member.symbol.Name} = reader.ReadTimeSpanArrayOrEmpty(\"{member.key}\");");
 					break;
 				case "Framework.Core.Maths.CBounds":
 					code.AppendLine($"{member.symbol.Name} = reader.ReadBoundsOrDefault(\"{member.key}\");");

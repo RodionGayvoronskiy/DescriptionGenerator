@@ -324,6 +324,9 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 			case "Framework.Core.Maths.CQuaternion":
 				return $"{prefix}\"{key}\", {kinds}Quaternion),";
+
+			case "System.TimeSpan":
+				return $"{prefix}\"{key}\", {kinds}TimeSpan),";
 		}
 
 		if (memberType == null) return null;
@@ -411,6 +414,8 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 				return $"{prefix}\"{key}\", {kinds}Float2List),";
 			case "Framework.Core.Maths.CFloat3":
 				return $"{prefix}\"{key}\", {kinds}Float3List),";
+			case "System.TimeSpan":
+				return $"{prefix}\"{key}\", {kinds}TimeSpanList),";
 			default:
 				return null;
 		}
