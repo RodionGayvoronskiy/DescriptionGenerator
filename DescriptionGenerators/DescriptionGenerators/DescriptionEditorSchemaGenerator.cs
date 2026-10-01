@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Aspid.Generators.Helper;
 using Microsoft.CodeAnalysis;
@@ -144,7 +145,8 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 					hasDefaultValue,
 					defaultValue,
 					initializer?.ToString(),
-					GetLiteralInitializer(initializer)));
+					GetLiteralInitializer(initializer),
+					GetSummary(member)));
 			}
 
 			// Insert this level's fields before any fields already collected from more-derived types
@@ -186,6 +188,9 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 			if (field.initializer != null)
 				entry = WithNamedArgument(entry, "defaultSource", $"\"{EscapeText(field.initializer)}\"");
+
+			if (field.tooltip != null)
+				entry = WithNamedArgument(entry, "tooltip", $"\"{EscapeMultiline(field.tooltip)}\"");
 
 			code.AppendLine(entry);
 		}
@@ -239,6 +244,14 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 			.Replace("\"", "\\\"")
 			.Replace("\r", " ")
 			.Replace("\n", " ");
+	}
+
+	private static string EscapeMultiline(string text)
+	{
+		return text
+			.Replace("\\", "\\\\")
+			.Replace("\"", "\\\"")
+			.Replace("\n", "\\n");
 	}
 
 	private static string? FormatDefaultLiteral(string? typeName, ITypeSymbol? memberType, object? value)
@@ -435,7 +448,8 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 		bool hasDefaultValue,
 		object? defaultValue,
 		string? initializer,
-		string? initializerLiteral)
+		string? initializerLiteral,
+		string? tooltip)
 	{
 		public readonly string key = key;
 		public readonly ISymbol member = member;
@@ -447,6 +461,94 @@ public class DescriptionEditorSchemaGenerator : IIncrementalGenerator
 
 		/// <summary>Тот же инициализатор, когда он литеральный и годится как значение дефолта.</summary>
 		public readonly string? initializerLiteral = initializerLiteral;
+
+		/// <summary>Текст <c>&lt;summary&gt;</c> члена — тултип поля в редакторе.</summary>
+		public readonly string? tooltip = tooltip;
+	}
+
+	private const string ParagraphBreak = "\u0001";
+
+	private static readonly Regex s_summary =new(@"<summary\s*>(.*?)</summary\s*>", RegexOptions.Singleline);
+	private static readonly Regex s_reference = new(@"<(?:see|seealso)\s+(?:cref|href)\s*=\s*""([^""]*)""\s*/>");
+	private static readonly Regex s_keyword = new(@"<see\s+langword\s*=\s*""([^""]*)""\s*/>");
+	private static readonly Regex s_parameter = new(@"<(?:paramref|typeparamref)\s+name\s*=\s*""([^""]*)""\s*/>");
+	private static readonly Regex s_paragraph = new(@"</?para\s*>|<br\s*/?>");
+	private static readonly Regex s_tag = new(@"<[^>]+>");
+	private static readonly Regex s_spaces = new(@"\s+");
+
+	/// <summary>
+	/// <c>&lt;summary&gt;</c> члена. Unity компилирует без <c>/doc</c>, и <c>///</c> приходит обычным
+	/// комментарием, поэтому текст собирается из leading trivia объявления, а не через
+	/// <see cref="ISymbol.GetDocumentationCommentXml"/>; тот остаётся для членов из метаданных.
+	/// </summary>
+	private static string? GetSummary(ISymbol member)
+	{
+		string? xml = null;
+
+		foreach (var reference in member.DeclaringSyntaxReferences)
+		{
+			var node = reference.GetSyntax();
+			if (node is VariableDeclaratorSyntax)
+				node = node.FirstAncestorOrSelf<MemberDeclarationSyntax>() ?? node;
+
+			var lines = node.GetLeadingTrivia().ToFullString()
+				.Split('\n')
+				.Select(static line => line.Trim())
+				.Where(static line => line.StartsWith("///", StringComparison.Ordinal) && !line.StartsWith("////", StringComparison.Ordinal))
+				.Select(static line => line.Substring(3));
+
+			xml = string.Join("\n", lines);
+			break;
+		}
+
+		if (string.IsNullOrWhiteSpace(xml))
+			xml = member.GetDocumentationCommentXml();
+
+		if (string.IsNullOrWhiteSpace(xml)) return null;
+
+		var summary = s_summary.Match(xml!);
+		if (!summary.Success) return null;
+
+		string text = summary.Groups[1].Value;
+		text = s_reference.Replace(text, static match => FormatReference(match.Groups[1].Value));
+		text = s_keyword.Replace(text, static match => match.Groups[1].Value);
+		text = s_parameter.Replace(text, static match => match.Groups[1].Value);
+		text = s_paragraph.Replace(text, ParagraphBreak);
+		text = s_tag.Replace(text, string.Empty);
+		text = DecodeEntities(text);
+
+		var paragraphs = text
+			.Split(ParagraphBreak[0])
+			.Select(static paragraph => s_spaces.Replace(paragraph, " ").Trim())
+			.Where(static paragraph => paragraph.Length > 0);
+
+		text = string.Join("\n", paragraphs);
+
+		return text.Length == 0 ? null : text;
+	}
+
+	private static string FormatReference(string reference)
+	{
+		int prefix = reference.IndexOf(':');
+		if (prefix == 1)
+			reference = reference.Substring(2);
+
+		int arity = reference.IndexOf('`');
+		if (arity >= 0)
+			reference = reference.Substring(0, arity);
+
+		int dot = reference.LastIndexOf('.');
+		return dot >= 0 ? reference.Substring(dot + 1) : reference;
+	}
+
+	private static string DecodeEntities(string text)
+	{
+		return text
+			.Replace("&lt;", "<")
+			.Replace("&gt;", ">")
+			.Replace("&quot;", "\"")
+			.Replace("&apos;", "'")
+			.Replace("&amp;", "&");
 	}
 
 	private static ExpressionSyntax? GetInitializer(ISymbol member)
